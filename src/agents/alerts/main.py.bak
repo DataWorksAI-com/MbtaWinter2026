@@ -1,0 +1,69 @@
+# agents/alerts/main.py
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import JSONResponse, RedirectResponse
+from shared.agentfacts import agentfacts_default
+from Capstone.server.humanize import humanize_alerts
+import os
+import requests
+import logging
+
+app = FastAPI(title="alerts-agent", version="1.0.0")
+log = logging.getLogger("alerts")
+
+# ---- fail fast if key missing ----
+MBTA_KEY = os.getenv("MBTA_API_KEY")
+if not MBTA_KEY:
+    raise RuntimeError("MBTA_API_KEY not set in environment")
+
+# ---- optional: send users to docs on "/" ----
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/docs")
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.get("/.well-known/agentfacts.json")
+def agentfacts():
+    return JSONResponse(agentfacts_default(["mbta.service_alerts.read"]))
+
+# ---- minimal, correct MBTA client ----
+def get_alerts(route: str | None = None, active_only: bool = True):
+    """
+    Calls MBTA v3 /alerts correctly:
+      - api_key must be a **query param**
+      - there's no filter[active]; use filter[lifecycle]
+    """
+    params = {
+        "api_key": MBTA_KEY,          # REQUIRED
+        "sort": "-updated_at",
+        "page[limit]": "25",
+        # Activity filter is optional; keep it or drop it
+        "filter[activity]": "BOARD,EXIT,RIDE",
+    }
+    if route:
+        params["filter[route]"] = route
+
+    # "Active" = NEW, ONGOING, UPDATE
+    params["filter[lifecycle]"] = "NEW,ONGOING,UPDATE" if active_only else "NEW,ONGOING,UPDATE,UPCOMING"
+
+    r = requests.get("https://api-v3.mbta.com/alerts", params=params, timeout=10)
+    # If you want more detail on failure, don't swallow exceptions
+    r.raise_for_status()
+    return r.json()
+
+# ---- your endpoint (kept same shape) ----
+@app.get("/alerts")
+def alerts(route: str | None = Query(default=None), active_only: bool = True):
+    try:
+        log.warning("alerts called route=%s active_only=%s", route, active_only)
+        data = get_alerts(route=route, active_only=active_only) or {}
+        items = data.get("data", [])
+        text, total = humanize_alerts(items)
+        return {"ok": True, "route": route, "count": total, "text": text, "raw": data}
+    except requests.HTTPError as e:
+        # surface the exact URL/status for quick debugging
+        raise HTTPException(status_code=502, detail=f"alerts error: {e}") from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"alerts error: {e}") from e

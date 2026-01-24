@@ -1,0 +1,246 @@
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+import httpx
+import logging
+from datetime import datetime
+
+from .llm_handler import LLMHandler
+from .passthrough_behavior import PassthroughBehavior
+from ..observability.otel_config import setup_otel, get_tracer, get_meter
+from ..observability.metrics import MetricsCollector
+from ..protocols.a2a_server import A2AServer
+from ..observability.clickhouse_logger import get_clickhouse_logger
+import uuid
+import time
+import contextlib
+
+
+
+ch_logger = get_clickhouse_logger()
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Setup OpenTelemetry
+setup_otel("exchange-agent", "http://localhost:4317")
+tracer = get_tracer("exchange-agent")
+meter = get_meter("exchange-agent")
+
+app = FastAPI(title="Exchange Agent 1", version="1.0.0")
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = "default"
+    context: Optional[Dict[str, Any]] = {}
+
+class ChatResponse(BaseModel):
+    response: str
+    conversation_id: str
+    timestamp: str
+    metadata: Dict[str, Any]
+
+class ExchangeAgent:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.llm_handler = LLMHandler(config['exchange_agent']['llm'])
+        self.passthrough = PassthroughBehavior()
+        self.metrics = MetricsCollector(meter)
+        
+        # HTTP client for orchestrator
+        self.orchestrator_url = config['exchange_agent']['orchestration']['mbta_server_url']
+        self.http_client = httpx.AsyncClient(timeout=30.0)
+        
+        # A2A Server for agent-to-agent communication
+        self.a2a_server = A2AServer(config['protocols']['a2a'])
+        
+        logger.info(f"ExchangeAgent initialized, orchestrator: {self.orchestrator_url}")
+    
+    async def process_message(self, request: ChatRequest) -> ChatResponse:
+        """Main message processing pipeline"""
+
+        start_time = time.time()
+        call_id = f"llm_{uuid.uuid4().hex[:12]}"
+        conversation_id = request.conversation_id or self._generate_conversation_id()
+
+        span_context = tracer.start_as_current_span("exchange_process_message") if tracer else contextlib.nullcontext()
+
+        with span_context as span:
+            if span:
+                span.set_attribute("conversation_id", conversation_id)
+                span.set_attribute("message_length", len(request.message))
+
+            try:
+                # 🔥 LOG: User message to ClickHouse
+                ch_logger.log_conversation(
+                    conversation_id=conversation_id,
+                    user_id=request.user_id,
+                    role='user',
+                    content=request.message,
+                    metadata=request.context
+                )
+
+                # Step 1: LLM processes user intent
+                llm_response = await self.llm_handler.process(
+                    message=request.message,
+                    conversation_id=conversation_id,
+                    context=request.context
+                )
+
+                if span:
+                    span.set_attribute("llm_intent", llm_response.get('intent', 'unknown'))
+
+                
+                llm_response['original_message'] = request.message
+                should_route = self.passthrough.should_route_to_orchestrator(llm_response)
+
+                logger.info(f"🔍 Passthrough decision for '{request.message}': route={should_route}, intent={llm_response.get('intent')}")
+                
+                agents_used = []
+                execution_time = 0
+
+
+
+                if should_route:
+                    # Step 3: Route to MBTA Orchestrator
+                    orchestrator_response = await self._call_orchestrator(
+                        message=request.message,
+                        conversation_id=conversation_id,
+                        llm_context=llm_response
+                    )
+
+                    # Step 4: LLM post-processes orchestrator response
+                    final_response = await self.llm_handler.synthesize_response(
+                        user_message=request.message,
+                        orchestrator_data=orchestrator_response,
+                        context=request.context
+                    )
+
+                    agents_used = orchestrator_response.get('agents_used', [])
+                    execution_time = orchestrator_response.get('execution_time', 0)
+
+                else:
+                    # LLM handles directly (general conversation)
+                    final_response = llm_response['response']
+
+                #  LOG: Assistant response to ClickHouse
+                ch_logger.log_conversation(
+                    conversation_id=conversation_id,
+                    user_id=request.user_id,
+                    role='assistant',
+                    content=final_response,
+                    intent=llm_response.get('intent', ''),
+                    routed_to_orchestrator=should_route,
+                    metadata={'call_id': call_id}
+                )
+
+                # Metrics
+                if self.metrics:
+                    self.metrics.record_request()
+
+                return ChatResponse(
+                    response=final_response,
+                    conversation_id=conversation_id,
+                    timestamp=datetime.now().isoformat(),
+                    metadata={
+                        'routed_to_orchestrator': should_route,
+                        'llm_intent': llm_response.get('intent', 'unknown'),
+                        'agents_used': agents_used if should_route else [],
+                        'agent_count': len(agents_used) if should_route else 0
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Error processing message: {e}", exc_info=True)
+                if span:
+                    span.record_exception(e)
+                if self.metrics:
+                    self.metrics.record_error()
+                raise HTTPException(status_code=500, detail=str(e))
+    
+    async def _call_orchestrator(
+        self, 
+        message: str, 
+        conversation_id: Optional[str],
+        llm_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Call MBTA Orchestrator"""
+        
+        with tracer.start_as_current_span("call_orchestrator"):
+            try:
+                response = await self.http_client.post(
+                    f"{self.orchestrator_url}/orchestrate",
+                    json={
+                        'message': message,
+                        'conversation_id': conversation_id,
+                        'context': llm_context
+                    }
+                )
+                response.raise_for_status()
+                return response.json()
+                
+            except httpx.HTTPError as e:
+                logger.error(f"Orchestrator call failed: {e}")
+                raise
+    
+    def _generate_conversation_id(self) -> str:
+        """Generate unique conversation ID"""
+        import uuid
+        return f"conv_{uuid.uuid4().hex[:12]}"
+
+# Initialize agent
+import yaml
+import os
+from pathlib import Path
+
+# Get project root directory
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+config_path = PROJECT_ROOT / 'config' / 'config.yaml'
+
+with open(config_path) as f:
+    config = yaml.safe_load(f)
+
+# ✅ Replace environment variable placeholders
+if 'OPENAI_API_KEY' in os.environ:
+    config['exchange_agent']['llm']['api_key'] = os.environ['OPENAI_API_KEY']
+else:
+    # If api_key in config contains ${...}, try to extract and use env var
+    api_key_config = config['exchange_agent']['llm']['api_key']
+    if isinstance(api_key_config, str) and api_key_config.startswith('${') and api_key_config.endswith('}'):
+        env_var_name = api_key_config[2:-1]  # Extract variable name
+        if env_var_name in os.environ:
+            config['exchange_agent']['llm']['api_key'] = os.environ[env_var_name]
+        else:
+            logger.error(f"Environment variable {env_var_name} not found!")
+
+agent = ExchangeAgent(config)
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Main chat endpoint"""
+    return await agent.process_message(request)
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "service": "exchange-agent"}
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint"""
+    return agent.metrics.get_metrics()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8100)
