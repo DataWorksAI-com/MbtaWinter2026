@@ -10,7 +10,7 @@ A Distributed multi-agent system serving Boston's MBTA network with intelligent 
 
 ## 🎯 **What This Is**
 
-MBTA Agentcy demonstrates **hybrid protocol orchestration** by combining:
+MBTA winter 2026 demonstrates **hybrid protocol orchestration** by combining:
 - **Anthropic's MCP** (Model Context Protocol) for fast, single-tool queries
 - **NANDA/Google's A2A** (Agent-to-Agent) for complex multi-agent coordination
 - **Intelligent LLM routing** that achieves **25x performance improvement**
