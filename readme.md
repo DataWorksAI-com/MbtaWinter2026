@@ -2,7 +2,8 @@
 ## Hybrid Protocol Transit Intelligence System
 A Distributed multi-agent system serving Boston's MBTA network with intelligent MCP+A2A protocol orchestration, Federation of Registries
 
-<img width="1395" height="901" alt="image" src="https://github.com/user-attachments/assets/87608a29-67e0-43db-a1eb-7bb622dc9bb4" />
+<img width="1206" height="829" alt="image" src="https://github.com/user-attachments/assets/ec898cb6-2178-4caa-bd17-2ffba024e21d" />
+
 
 
 
