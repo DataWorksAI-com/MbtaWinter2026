@@ -1,0 +1,35 @@
+# ============================================================
+# ConfigMap: Shared configuration for all MBTA services
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mbta-config
+  namespace: mbta
+  labels:
+    app.kubernetes.io/part-of: mbta-winter-2026
+data:
+  # Exchange agent config
+  USE_SLIM: "true"
+  REGISTRY_URL: "http://registry:6900"
+  EXCHANGE_AGENT_URL: "http://exchange:8100"
+
+  # Agent URLs (used by SLIM client and orchestrator)
+  ALERTS_AGENT_URL: "http://alerts-agent:50051"
+  PLANNER_AGENT_URL: "http://planner-agent:50052"
+  STOPFINDER_AGENT_URL: "http://stopfinder-agent:50053"
+  ALERTS_HTTP_URL: "http://alerts-agent:8001"
+  PLANNER_HTTP_URL: "http://planner-agent:8002"
+  STOPFINDER_HTTP_URL: "http://stopfinder-agent:8003"
+
+  # Observability
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  CLICKHOUSE_ENABLED: "true"
+  CLICKHOUSE_HOST: "clickhouse"
+  CLICKHOUSE_PORT: "8123"
+  CLICKHOUSE_USER: "default"
+  CLICKHOUSE_PASSWORD: ""
+  CLICKHOUSE_DB: "mbta_logs"
+
+  # Application
+  LOG_LEVEL: "INFO"

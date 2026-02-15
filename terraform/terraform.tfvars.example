@@ -1,0 +1,29 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in your values
+# DO NOT commit terraform.tfvars to version control!
+
+# REQUIRED: Your Linode API token
+linode_token = "your-linode-api-token-here"
+
+# Region (default: us-east / Newark, NJ – close to Boston)
+# region = "us-east"
+
+# Cluster label
+# cluster_label = "mbta-winter-2026"
+
+# Kubernetes version
+# k8s_version = "1.34"
+
+# Instance types
+# lke_node_type = "g6-standard-2"  # 4GB Shared
+
+# LKE node pool configuration
+# lke_node_count      = 3
+# lke_autoscaler_min  = 3
+# lke_autoscaler_max  = 5
+
+# High availability control plane
+# enable_ha_control_plane = true
+
+# Tags
+# tags = ["mbta", "multi-agent", "terraform"]

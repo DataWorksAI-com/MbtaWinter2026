@@ -1,0 +1,105 @@
+# ============================================================
+# StopFinder Agent Deployment + Service
+# HTTP A2A (8003) + SLIM transport (50053)
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stopfinder-agent
+  namespace: mbta
+  labels:
+    app: stopfinder-agent
+    app.kubernetes.io/part-of: mbta-winter-2026
+    agent-type: a2a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stopfinder-agent
+  template:
+    metadata:
+      labels:
+        app: stopfinder-agent
+    spec:
+      containers:
+        # HTTP A2A server
+        - name: stopfinder-http
+          image: ${DOCKER_REGISTRY}/mbta-agent:latest
+          command: ["uvicorn", "src.agents.stopfinder.main:app", "--host", "0.0.0.0", "--port", "8003"]
+          ports:
+            - containerPort: 8003
+              name: http
+          envFrom:
+            - configMapRef:
+                name: mbta-config
+            - secretRef:
+                name: mbta-api-secrets
+          env:
+            - name: PYTHONPATH
+              value: /app
+            - name: PORT
+              value: "8003"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+        # SLIM A2A server
+        - name: stopfinder-slim
+          image: ${DOCKER_REGISTRY}/mbta-agent:latest
+          command: ["python", "-m", "src.agents.stopfinder.slim_stopfinder_wrapper_fixed"]
+          ports:
+            - containerPort: 50053
+              name: slim
+          envFrom:
+            - configMapRef:
+                name: mbta-config
+            - secretRef:
+                name: mbta-api-secrets
+          env:
+            - name: PYTHONPATH
+              value: /app
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stopfinder-agent
+  namespace: mbta
+  labels:
+    app: stopfinder-agent
+    app.kubernetes.io/part-of: mbta-winter-2026
+spec:
+  selector:
+    app: stopfinder-agent
+  ports:
+    - port: 8003
+      targetPort: 8003
+      protocol: TCP
+      name: http
+    - port: 50053
+      targetPort: 50053
+      protocol: TCP
+      name: slim
+  type: ClusterIP

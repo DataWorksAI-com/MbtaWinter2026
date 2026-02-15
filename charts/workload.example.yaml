@@ -1,0 +1,150 @@
+# ============================================================
+# App Platform Workload Template for MBTA Winter 2026
+# Use this as a reference when creating workloads in
+# Akamai App Platform (similar to charts/workflow.example.yaml
+# in the reference repo).
+#
+# Each service below should be deployed as a separate workload.
+# ============================================================
+
+# ─────────────────────────────────────────────
+# Exchange Agent Workload
+# ─────────────────────────────────────────────
+# image:
+#   repository: "REPLACE_WITH_HARBOR_REGISTRY/mbta-exchange"
+#   pullPolicy: Always
+#   tag: "latest"
+#
+# env:
+#   - name: PYTHONPATH
+#     value: /app
+#   - name: USE_SLIM
+#     value: "true"
+#   - name: REGISTRY_URL
+#     value: "http://registry:6900"
+#   - name: ALERTS_AGENT_URL
+#     value: "http://alerts-agent:50051"
+#   - name: PLANNER_AGENT_URL
+#     value: "http://planner-agent:50052"
+#   - name: STOPFINDER_AGENT_URL
+#     value: "http://stopfinder-agent:50053"
+#   - name: OTEL_EXPORTER_OTLP_ENDPOINT
+#     value: "http://otel-collector:4317"
+#   - name: CLICKHOUSE_ENABLED
+#     value: "true"
+#   - name: CLICKHOUSE_HOST
+#     value: "clickhouse"
+#   - name: CLICKHOUSE_PORT
+#     value: "8123"
+#   # Secret environment variables
+#   - name: OPENAI_API_KEY
+#     valueFrom:
+#       secretKeyRef:
+#         name: openai-api-key-secret
+#         key: OPENAI_API_KEY
+#   - name: MBTA_API_KEY
+#     valueFrom:
+#       secretKeyRef:
+#         name: mbta-api-key-secret
+#         key: MBTA_API_KEY
+#
+# secrets:
+#   - openai-api-key-secret
+#   - mbta-api-key-secret
+#
+# containerPorts:
+#   - name: http
+#     containerPort: 8100
+#     protocol: TCP
+#
+# servicePorts:
+#   - port: 8100
+#     targetPort: 8100
+#     protocol: TCP
+#     name: http
+#
+# livenessProbe:
+#   httpGet:
+#     path: /
+#     port: 8100
+#   initialDelaySeconds: 30
+#   periodSeconds: 15
+#
+# readinessProbe:
+#   httpGet:
+#     path: /
+#     port: 8100
+#   initialDelaySeconds: 10
+#   periodSeconds: 5
+#
+# resources:
+#   limits:
+#     cpu: 500m
+#     memory: 1Gi
+#   requests:
+#     cpu: 200m
+#     memory: 512Mi
+
+# ─────────────────────────────────────────────
+# Frontend Workload
+# ─────────────────────────────────────────────
+# image:
+#   repository: "REPLACE_WITH_HARBOR_REGISTRY/mbta-exchange"
+#   pullPolicy: Always
+#   tag: "latest"
+#
+# command: ["uvicorn", "src.frontend.chat_server:app", "--host", "0.0.0.0", "--port", "3000"]
+#
+# env:
+#   - name: PYTHONPATH
+#     value: /app
+#   - name: EXCHANGE_AGENT_URL
+#     value: "http://exchange:8100"
+#
+# containerPorts:
+#   - name: http
+#     containerPort: 3000
+#     protocol: TCP
+#
+# servicePorts:
+#   - port: 80
+#     targetPort: 3000
+#     protocol: TCP
+#     name: http
+#
+# resources:
+#   limits:
+#     cpu: 300m
+#     memory: 512Mi
+#   requests:
+#     cpu: 100m
+#     memory: 256Mi
+
+# ─────────────────────────────────────────────
+# Agent Workloads (alerts / planner / stopfinder)
+# Each agent has two containers: HTTP + SLIM
+# ─────────────────────────────────────────────
+# image:
+#   repository: "REPLACE_WITH_HARBOR_REGISTRY/mbta-agent"
+#   pullPolicy: Always
+#   tag: "latest"
+#
+# containers:
+#   - name: http
+#     command: ["uvicorn", "src.agents.alerts.main:app", "--host", "0.0.0.0", "--port", "8001"]
+#     ports: [8001]
+#   - name: slim
+#     command: ["python", "-m", "src.agents.alerts.slim_alerts_wrapper_fixed"]
+#     ports: [50051]
+#
+# secrets:
+#   - openai-api-key-secret
+#   - mbta-api-key-secret
+#
+# resources:
+#   limits:
+#     cpu: 300m
+#     memory: 512Mi
+#   requests:
+#     cpu: 100m
+#     memory: 256Mi

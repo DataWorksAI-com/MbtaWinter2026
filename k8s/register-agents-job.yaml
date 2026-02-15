@@ -1,0 +1,80 @@
+# ============================================================
+# Job: Register MBTA agents in NANDA Registry
+# Run this after all agents and registry are deployed
+# ============================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: register-agents
+  namespace: mbta
+  labels:
+    app.kubernetes.io/part-of: mbta-winter-2026
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: register
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for registry to be ready..."
+              until curl -sf http://registry:6900/health; do
+                echo "Registry not ready yet, retrying in 5s..."
+                sleep 5
+              done
+              echo "Registry is ready!"
+
+              echo "Registering Alerts Agent..."
+              curl -s -X POST http://registry:6900/register \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "agent_id": "mbta-alerts",
+                  "name": "MBTA Service Alerts Agent",
+                  "description": "Monitors and reports MBTA service alerts, delays, and disruptions for all transit lines including Red, Orange, Blue, Green, Silver, Commuter Rail, Bus, and Ferry. Provides real-time alert information.",
+                  "capabilities": ["alerts", "service_status", "delays", "disruptions"],
+                  "agent_url": "http://alerts-agent:8001",
+                  "slim_url": "http://alerts-agent:50051",
+                  "status": "alive",
+                  "protocol": "a2a",
+                  "transport": "slim"
+                }'
+
+              echo ""
+              echo "Registering Planner Agent..."
+              curl -s -X POST http://registry:6900/register \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "agent_id": "mbta-planner",
+                  "name": "MBTA Route Planner Agent",
+                  "description": "Plans transit routes between locations in the Boston MBTA network. Can find optimal routes, transfers, and provide trip planning assistance using real-time schedule data.",
+                  "capabilities": ["trip_planning", "route_finding", "transfers", "schedules"],
+                  "agent_url": "http://planner-agent:8002",
+                  "slim_url": "http://planner-agent:50052",
+                  "status": "alive",
+                  "protocol": "a2a",
+                  "transport": "slim"
+                }'
+
+              echo ""
+              echo "Registering StopFinder Agent..."
+              curl -s -X POST http://registry:6900/register \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "agent_id": "mbta-stopfinder",
+                  "name": "MBTA Stop Finder Agent",
+                  "description": "Finds MBTA stops and stations by name, location, or route. Provides stop details including accessibility, available routes, and nearby connections.",
+                  "capabilities": ["stop_search", "station_info", "accessibility", "nearby_stops"],
+                  "agent_url": "http://stopfinder-agent:8003",
+                  "slim_url": "http://stopfinder-agent:50053",
+                  "status": "alive",
+                  "protocol": "a2a",
+                  "transport": "slim"
+                }'
+
+              echo ""
+              echo "✅ All agents registered!"
+              curl -s http://registry:6900/list | head -100

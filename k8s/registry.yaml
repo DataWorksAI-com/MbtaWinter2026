@@ -1,0 +1,88 @@
+# ============================================================
+# NANDA Registry Deployment + Service
+# Agent discovery and semantic lookup (port 6900)
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: mbta
+  labels:
+    app: registry
+    app.kubernetes.io/part-of: mbta-winter-2026
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+
+        - name: registry
+          image: ${DOCKER_REGISTRY}/mbta-registry:latest
+          ports:
+            - containerPort: 6900
+              name: http
+          env:
+            - name: MONGO_URI
+              value: "mongodb://localhost:27017"
+            - name: MONGODB_DB
+              value: "nanda_private_registry"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 6900
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 6900
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: mongo-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: mbta
+  labels:
+    app: registry
+    app.kubernetes.io/part-of: mbta-winter-2026
+spec:
+  selector:
+    app: registry
+  ports:
+    - port: 6900
+      targetPort: 6900
+      protocol: TCP
+      name: http
+  type: ClusterIP

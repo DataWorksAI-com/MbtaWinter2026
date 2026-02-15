@@ -20,7 +20,7 @@ def setup_otel(service_name: str, otel_endpoint: str = None):
     global _tracer_provider, _meter_provider
     
     if otel_endpoint is None:
-        otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+        otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
     
     try:
         resource = Resource.create({

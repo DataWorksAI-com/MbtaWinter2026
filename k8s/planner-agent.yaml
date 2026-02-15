@@ -1,0 +1,105 @@
+# ============================================================
+# Planner Agent Deployment + Service
+# HTTP A2A (8002) + SLIM transport (50052)
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: planner-agent
+  namespace: mbta
+  labels:
+    app: planner-agent
+    app.kubernetes.io/part-of: mbta-winter-2026
+    agent-type: a2a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: planner-agent
+  template:
+    metadata:
+      labels:
+        app: planner-agent
+    spec:
+      containers:
+        # HTTP A2A server
+        - name: planner-http
+          image: ${DOCKER_REGISTRY}/mbta-agent:latest
+          command: ["uvicorn", "src.agents.planner.main:app", "--host", "0.0.0.0", "--port", "8002"]
+          ports:
+            - containerPort: 8002
+              name: http
+          envFrom:
+            - configMapRef:
+                name: mbta-config
+            - secretRef:
+                name: mbta-api-secrets
+          env:
+            - name: PYTHONPATH
+              value: /app
+            - name: PORT
+              value: "8002"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+        # SLIM A2A server
+        - name: planner-slim
+          image: ${DOCKER_REGISTRY}/mbta-agent:latest
+          command: ["python", "-m", "src.agents.planner.slim_planner_wrapper_fixed"]
+          ports:
+            - containerPort: 50052
+              name: slim
+          envFrom:
+            - configMapRef:
+                name: mbta-config
+            - secretRef:
+                name: mbta-api-secrets
+          env:
+            - name: PYTHONPATH
+              value: /app
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: planner-agent
+  namespace: mbta
+  labels:
+    app: planner-agent
+    app.kubernetes.io/part-of: mbta-winter-2026
+spec:
+  selector:
+    app: planner-agent
+  ports:
+    - port: 8002
+      targetPort: 8002
+      protocol: TCP
+      name: http
+    - port: 50052
+      targetPort: 50052
+      protocol: TCP
+      name: slim
+  type: ClusterIP

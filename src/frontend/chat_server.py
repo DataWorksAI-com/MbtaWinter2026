@@ -25,7 +25,7 @@ app.add_middleware(
 )
 
 # Configuration
-EXCHANGE_AGENT_URL = "http://localhost:8100"
+EXCHANGE_AGENT_URL = "http://exchange:8100"
 
 # Mount static files for images
 static_dir = Path(__file__).parent / "static"
@@ -61,7 +61,7 @@ async def get_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MBTA Agntcy 🎄</title>
+    <title>MBTA Agntcy</title>
     <style>
         * {
             margin: 0;
@@ -530,7 +530,7 @@ async def get_ui():
             <div class="chat-header">
                 <div class="header-left">
                     <div class="status-indicator"></div>
-                    MBTA Agntcy 🎄
+                    MBTA Agntcy
                 </div>
             </div>
             
@@ -875,7 +875,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     }, websocket)
                     
                 except httpx.HTTPError as e:
-                    logger.error(f"Error calling exchange agent: {e}")
+                    logger.error(f"Error calling exchange agent at {EXCHANGE_AGENT_URL}: {e}")
                     await manager.send_message({
                         'type': 'error',
                         'error': 'Failed to process message. Please try again.'

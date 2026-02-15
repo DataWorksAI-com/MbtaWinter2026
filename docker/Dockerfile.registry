@@ -1,0 +1,18 @@
+# ============================================================
+# NANDA Registry Dockerfile
+# Agent discovery and semantic registry (port 6900)
+# ============================================================
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install registry dependencies
+COPY src/registry/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy local registry source
+COPY src/registry/ .
+
+EXPOSE 6900
+
+CMD ["gunicorn", "--bind", "0.0.0.0:6900", "--workers", "2", "registry:app"]

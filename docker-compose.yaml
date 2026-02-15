@@ -1,0 +1,284 @@
+# ============================================================
+# Docker Compose for LOCAL DEVELOPMENT
+# Runs the entire MBTA multi-agent system locally
+#
+# Usage:
+#   cp .env.example .env   # Fill in API keys
+#   docker compose up --build
+#
+# Access:
+#   Frontend:     http://localhost:3000
+#   Exchange API: http://localhost:8100
+#   Jaeger UI:    http://localhost:16686
+#   Grafana:      http://localhost:3001
+#   Registry:     http://localhost:6900
+# ============================================================
+
+services:
+  # ─────────────────────────────────────────────
+  # Exchange Agent — Protocol gateway + routing
+  # ─────────────────────────────────────────────
+  exchange:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.exchange
+    container_name: mbta-exchange
+    ports:
+      - "8100:8100"
+    environment:
+      - PYTHONPATH=/app
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MBTA_API_KEY=${MBTA_API_KEY}
+      - USE_SLIM=true
+      - REGISTRY_URL=http://registry:6900
+      - ALERTS_AGENT_URL=http://alerts-agent:50051
+      - WATCHFILES_FORCE_POLLING=true
+      - PLANNER_AGENT_URL=http://planner-agent:50052
+      - STOPFINDER_AGENT_URL=http://stopfinder-agent:50053
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - CLICKHOUSE_ENABLED=true
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+      - CLICKHOUSE_DB=mbta_logs
+    depends_on:
+      - alerts-agent
+      - planner-agent
+      - stopfinder-agent
+      - registry
+      - otel-collector
+    networks:
+      - mbta-net
+    restart: unless-stopped
+    command: uvicorn src.exchange_agent.exchange_server:app --host 0.0.0.0 --port 8100 --reload --reload-dir /app/src
+    volumes:
+      - ./src:/app/src
+
+  # ─────────────────────────────────────────────
+  # Frontend — WebSocket chat UI
+  # ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.exchange
+    container_name: mbta-frontend
+    command: uvicorn src.frontend.chat_server:app --host 0.0.0.0 --port 3000 --reload --reload-dir /app/src
+    ports:
+      - "3000:3000"
+    environment:
+      - PYTHONPATH=/app
+      - EXCHANGE_AGENT_URL=http://exchange:8100
+      - WATCHFILES_FORCE_POLLING=true
+    depends_on:
+      - exchange
+    networks:
+      - mbta-net
+    volumes:
+      - ./src:/app/src
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Alerts Agent — HTTP A2A + SLIM
+  # ─────────────────────────────────────────────
+  alerts-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: mbta-alerts-agent
+    command: >
+      sh -c "
+        uvicorn src.agents.alerts.main:app --host 0.0.0.0 --port 8001 --reload --reload-dir /app/src &
+        python -m src.agents.alerts.slim_alerts_wrapper_fixed &
+        wait
+      "
+    ports:
+      - "8001:8001"
+      - "50051:50051"
+    environment:
+      - PYTHONPATH=/app
+      - MBTA_API_KEY=${MBTA_API_KEY}
+      - PORT=8001
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - WATCHFILES_FORCE_POLLING=true
+    depends_on:
+      - otel-collector
+    networks:
+      - mbta-net
+    volumes:
+      - ./src:/app/src
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Planner Agent — HTTP A2A + SLIM
+  # ─────────────────────────────────────────────
+  planner-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: mbta-planner-agent
+    command: >
+      sh -c "
+        uvicorn src.agents.planner.main:app --host 0.0.0.0 --port 8002 --reload --reload-dir /app/src &
+        python -m src.agents.planner.slim_planner_wrapper_fixed &
+        wait
+      "
+    ports:
+      - "8002:8002"
+      - "50052:50052"
+    environment:
+      - PYTHONPATH=/app
+      - MBTA_API_KEY=${MBTA_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PORT=8002
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - WATCHFILES_FORCE_POLLING=true
+    depends_on:
+      - otel-collector
+    networks:
+      - mbta-net
+    volumes:
+      - ./src:/app/src
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # StopFinder Agent — HTTP A2A + SLIM
+  # ─────────────────────────────────────────────
+  stopfinder-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: mbta-stopfinder-agent
+    command: >
+      sh -c "
+        uvicorn src.agents.stopfinder.main:app --host 0.0.0.0 --port 8003 --reload --reload-dir /app/src &
+        python -m src.agents.stopfinder.slim_stopfinder_wrapper_fixed &
+        wait
+      "
+    ports:
+      - "8003:8003"
+      - "50053:50053"
+    environment:
+      - PYTHONPATH=/app
+      - MBTA_API_KEY=${MBTA_API_KEY}
+      - PORT=8003
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - WATCHFILES_FORCE_POLLING=true
+    depends_on:
+      - otel-collector
+    networks:
+      - mbta-net
+    volumes:
+      - ./src:/app/src
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # NANDA Registry + MongoDB
+  # ─────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: mbta-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - mbta-net
+    restart: unless-stopped
+
+  registry:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.registry
+    container_name: mbta-registry
+    ports:
+      - "6900:6900"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGODB_DB=nanda_private_registry
+      - FLASK_DEBUG=1
+    depends_on:
+      - mongodb
+    networks:
+      - mbta-net
+    command: flask --app registry run --host 0.0.0.0 --port 6900 --reload
+    volumes:
+      - ./src/registry:/app
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Observability Stack
+  # ─────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: mbta-jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC receiver from OTEL Collector
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP (optional)
+    environment:
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=true
+      - COLLECTOR_OTLP_ENABLED=true
+    volumes:
+      - jaeger-data:/badger
+    networks:
+      - mbta-net
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.12
+    container_name: mbta-clickhouse
+    ports:
+      - "0.0.0.0:8123:8123"   # HTTP interface - accept external connections
+      - "0.0.0.0:9000:9000"   # Native protocol - accept external connections
+    environment:
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+      - CLICKHOUSE_DB=mbta_metrics
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    networks:
+      - mbta-net
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: mbta-otel-collector
+    command: ["--config=/etc/otel/otel-collector-config.yaml"]
+    # ports:
+      # - "0.0.0.0:4317:4317"   # OTLP gRPC - accept external connections
+      # - "0.0.0.0:4318:4318"   # OTLP HTTP - accept external connections
+    volumes:
+      - ./docker/otel-collector-config.yaml:/etc/otel/otel-collector-config.yaml
+    depends_on:
+      - jaeger
+      - clickhouse
+    networks:
+      - mbta-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: mbta-grafana
+    ports:
+      - "3001:3000"  # Grafana UI
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - mbta-net
+    restart: unless-stopped
+
+networks:
+  mbta-net:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  jaeger-data:
+  clickhouse-data:
+  grafana-data:
