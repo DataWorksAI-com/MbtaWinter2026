@@ -8,12 +8,10 @@ Connects to mbta-mcp server via stdio subprocess
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from opentelemetry import trace
-import asyncio
 import logging
 import json
 import sys
-import os
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 tracer = trace.get_tracer(__name__)
 logger = logging.getLogger(__name__)
@@ -93,345 +91,34 @@ class MCPClient:
         """Ensure client is initialized before use"""
         if not self._initialized:
             await self.initialize()
-    
 
-    
-    @tracer.start_as_current_span("mcp_get_alerts")
-    async def get_alerts(self, 
-                         route_id: Optional[str] = None,
-                         activity: Optional[List[str]] = None,
-                         datetime: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Get MBTA service alerts
-        Tool name: mbta_get_alerts
-        """
+    async def call_tool(self, tool_name: str, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Call any MCP tool with per-tool tracing based on the tool name."""
         await self.ensure_initialized()
-        
-        arguments = {}
-        if route_id:
-            arguments["route_id"] = route_id
-        if activity:
-            arguments["activity"] = activity
-        if datetime:
-            arguments["datetime"] = datetime
-        
-        logger.info(f"📞 MCP call: mbta_get_alerts({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_alerts", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_alerts completed - {len(data.get('data', []))} alerts")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_routes")
-    async def get_routes(self, 
-                        route_id: Optional[str] = None,
-                        route_type: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Get MBTA routes
-        Tool name: mbta_get_routes
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if route_id:
-            arguments["route_id"] = route_id
-        if route_type is not None:
-            arguments["route_type"] = route_type
-        
-        logger.info(f"📞 MCP call: mbta_get_routes({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_routes", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_routes completed - {len(data.get('data', []))} routes")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_stops")
-    async def get_stops(self, 
-                        stop_id: Optional[str] = None,
-                        route_id: Optional[str] = None,
-                        location_type: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Get MBTA stops
-        Tool name: mbta_get_stops
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if stop_id:
-            arguments["stop_id"] = stop_id
-        if route_id:
-            arguments["route_id"] = route_id
-        if location_type is not None:
-            arguments["location_type"] = location_type
-        
-        logger.info(f"📞 MCP call: mbta_get_stops({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_stops", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_stops completed - {len(data.get('data', []))} stops")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_search_stops")
-    async def search_stops(self, query: str) -> Dict[str, Any]:
-        """
-        Search for stops by name
-        Tool name: mbta_search_stops
-        """
-        await self.ensure_initialized()
-        
-        logger.info(f"📞 MCP call: mbta_search_stops(query='{query}')")
-        
-        result = await self.session.call_tool("mbta_search_stops", {"query": query})
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_search_stops completed - {len(data.get('data', []))} stops")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_predictions")
-    async def get_predictions(self, 
-                             stop_id: Optional[str] = None,
-                             route_id: Optional[str] = None,
-                             direction_id: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Get real-time predictions
-        Tool name: mbta_get_predictions
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if stop_id:
-            arguments["stop_id"] = stop_id
-        if route_id:
-            arguments["route_id"] = route_id
-        if direction_id is not None:
-            arguments["direction_id"] = direction_id
-        
-        logger.info(f"📞 MCP call: mbta_get_predictions({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_predictions", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_predictions completed - {len(data.get('data', []))} predictions")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_predictions_for_stop")
-    async def get_predictions_for_stop(self, stop_id: str) -> Dict[str, Any]:
-        """
-        Get all predictions for a specific stop
-        Tool name: mbta_get_predictions_for_stop
-        """
-        await self.ensure_initialized()
-        
-        logger.info(f"📞 MCP call: mbta_get_predictions_for_stop(stop_id='{stop_id}')")
-        
-        result = await self.session.call_tool("mbta_get_predictions_for_stop", {"stop_id": stop_id})
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_predictions_for_stop completed")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_schedules")
-    async def get_schedules(self,
-                           stop_id: Optional[str] = None,
-                           route_id: Optional[str] = None,
-                           direction_id: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Get MBTA schedules
-        Tool name: mbta_get_schedules
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if stop_id:
-            arguments["stop_id"] = stop_id
-        if route_id:
-            arguments["route_id"] = route_id
-        if direction_id is not None:
-            arguments["direction_id"] = direction_id
-        
-        logger.info(f"📞 MCP call: mbta_get_schedules({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_schedules", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_schedules completed")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_trips")
-    async def get_trips(self,
-                       route_id: Optional[str] = None,
-                       direction_id: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Get MBTA trips
-        Tool name: mbta_get_trips
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if route_id:
-            arguments["route_id"] = route_id
-        if direction_id is not None:
-            arguments["direction_id"] = direction_id
-        
-        logger.info(f"📞 MCP call: mbta_get_trips({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_trips", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_trips completed")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_vehicles")
-    async def get_vehicles(self,
-                          route_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Get real-time vehicle positions
-        Tool name: mbta_get_vehicles
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if route_id:
-            arguments["route_id"] = route_id
-        
-        logger.info(f"📞 MCP call: mbta_get_vehicles({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_vehicles", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_vehicles completed - {len(data.get('data', []))} vehicles")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_get_nearby_stops")
-    async def get_nearby_stops(self, 
-                              latitude: float,
-                              longitude: float,
-                              radius: float = 0.5) -> Dict[str, Any]:
-        """
-        Get stops near a location
-        Tool name: mbta_get_nearby_stops
-        """
-        await self.ensure_initialized()
-        
-        arguments = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "radius": radius
-        }
-        
-        logger.info(f"📞 MCP call: mbta_get_nearby_stops({arguments})")
-        
-        result = await self.session.call_tool("mbta_get_nearby_stops", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_get_nearby_stops completed")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_plan_trip")
-    async def plan_trip(self,
-                       from_location: str,
-                       to_location: str,
-                       datetime: Optional[str] = None,
-                       arrive_by: bool = False) -> Dict[str, Any]:
-        """
-        Plan a trip between two locations
-        Tool name: mbta_plan_trip
-        """
-        await self.ensure_initialized()
-        
-        arguments = {
-            "from": from_location,
-            "to": to_location
-        }
-        if datetime:
-            arguments["datetime"] = datetime
-        if arrive_by:
-            arguments["arrive_by"] = arrive_by
-        
-        logger.info(f"📞 MCP call: mbta_plan_trip({arguments})")
-        
-        result = await self.session.call_tool("mbta_plan_trip", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_plan_trip completed")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_list_all_routes")
-    async def list_all_routes(self, fuzzy_filter: Optional[str] = None) -> Dict[str, Any]:
-        """
-        List all routes with optional fuzzy filtering
-        Tool name: mbta_list_all_routes
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if fuzzy_filter:
-            arguments["fuzzy_filter"] = fuzzy_filter
-        
-        logger.info(f"📞 MCP call: mbta_list_all_routes({arguments})")
-        
-        result = await self.session.call_tool("mbta_list_all_routes", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_list_all_routes completed")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_list_all_stops")
-    async def list_all_stops(self, fuzzy_filter: Optional[str] = None) -> Dict[str, Any]:
-        """
-        List all stops with optional fuzzy filtering
-        Tool name: mbta_list_all_stops
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if fuzzy_filter:
-            arguments["fuzzy_filter"] = fuzzy_filter
-        
-        logger.info(f"📞 MCP call: mbta_list_all_stops({arguments})")
-        
-        result = await self.session.call_tool("mbta_list_all_stops", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_list_all_stops completed")
-        
-        return data
-    
-    @tracer.start_as_current_span("mcp_list_all_alerts")
-    async def list_all_alerts(self, fuzzy_filter: Optional[str] = None) -> Dict[str, Any]:
-        """
-        List all alerts with optional fuzzy filtering
-        Tool name: mbta_list_all_alerts
-        """
-        await self.ensure_initialized()
-        
-        arguments = {}
-        if fuzzy_filter:
-            arguments["fuzzy_filter"] = fuzzy_filter
-        
-        logger.info(f"📞 MCP call: mbta_list_all_alerts({arguments})")
-        
-        result = await self.session.call_tool("mbta_list_all_alerts", arguments)
-        data = self._parse_result(result)
-        
-        logger.info(f"✓ mbta_list_all_alerts completed")
-        
-        return data
+
+        if not tool_name:
+            raise ValueError("tool_name is required")
+
+        arguments = arguments or {}
+        span_name = f"mcp_tool.{tool_name}"
+
+        with tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("tool_name", tool_name)
+            span.set_attribute("arguments", json.dumps(arguments, default=str))
+
+            logger.info(f"📞 MCP call: {tool_name}({arguments})")
+
+            try:
+                result = await self.session.call_tool(tool_name, arguments)
+                data = self._parse_result(result)
+                span.set_attribute("result_size", len(str(data)))
+                logger.info(f"✓ {tool_name} completed")
+                return data
+            except Exception as e:
+                logger.error(f"❌ MCP tool failed: {tool_name} - {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_attribute("success", False)
+                raise
     
     def _parse_result(self, result) -> Dict[str, Any]:
         """Parse MCP tool result"""

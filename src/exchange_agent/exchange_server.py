@@ -24,7 +24,7 @@ except Exception as e:
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 from typing import Optional, Dict, Any, List
 import logging
 import time
@@ -32,6 +32,10 @@ import uuid
 import json
 import asyncio
 import random
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import StructuredTool
+from langchain_mcp_adapters.tools import load_mcp_tools
 
 # Add parent directory to Python path for imports
 if __name__ == "__main__":
@@ -203,6 +207,12 @@ class ChatResponse(BaseModel):
     intent: str
     confidence: float
     metadata: Optional[Dict[str, Any]] = None
+
+
+class Context(BaseModel):
+    query: str
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 @app.get("/")
@@ -650,6 +660,151 @@ Analyze this query and provide complete routing decision."""
             }
 
 
+async def try_langchain_mcp_resolution(
+    query: str,
+    conversation_id: str,
+    user_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    tools = await load_mcp_tools(mcp_client.session)
+
+    
+    if not tools:
+        return None
+
+    logger.info(f"Attempting MCP resolution with LangChain agent and {len(tools)} tools...")
+    # Remove the tool named "mbta_get_external_alerts" if because it returns a 404
+    tools = [tool for tool in tools if getattr(tool, "name", None) != "mbta_get_external_alerts"]
+    tools = _wrap_mcp_tools_with_tracing(tools)
+    logger.info(f"Tools: {[tool.name for tool in tools]}")
+
+    llm = ChatOpenAI(
+        model="gpt-4.1-mini",
+        temperature=0
+    )
+
+    tool_use_system_prompt = (
+        "You are an MBTA routing assistant. Use tools to gather real-time data "
+        "before answering complex questions. For complex queries, call multiple "
+        "tools as needed (alerts, predictions, routes, stops, trip planning) and "
+        "combine results. Prioritize delays/alerts when the user mentions them. "
+        "If a single tool suffices, use it once and answer concisely. "
+        "If the name of a stop doesn't match exactly, use a similar name that is a better match. "
+        "When you are done, review the question and your tool results, and if you don't have enough information to answer the question, call additional tools as needed."
+        "Never include follow up questions in your answer" # TODO: add conversation memory and then we can have follow up questions again
+    )
+
+    agent = create_agent(
+        llm,
+        tools,
+        context_schema=Context,
+        system_prompt=tool_use_system_prompt
+    )
+
+    try:
+        result = await agent.ainvoke(
+            {"messages": [{"role": "user", "content": query}]},
+            context=Context(
+                query=query,
+                conversation_id=conversation_id,
+                user_id=user_id
+            ).model_dump(exclude_none=True)
+        )
+
+    except Exception as e:
+        logger.warning(f"LangChain MCP agent failed: {e}")
+        return None
+
+    response_text = _extract_langchain_response_text(result)
+
+    if not response_text:
+        return None
+
+    return {
+        "response": response_text,
+        "method": "langchain_agent"
+    }
+
+
+def _extract_langchain_response_text(result: Any) -> Optional[str]:
+    if isinstance(result, dict):
+        direct = result.get("output") or result.get("response")
+        if direct:
+            return direct
+
+        messages = result.get("messages")
+        if isinstance(messages, list):
+            for message in reversed(messages):
+                content = getattr(message, "content", None)
+                if not content:
+                    continue
+                if message.__class__.__name__ == "AIMessage" or getattr(message, "type", None) == "ai":
+                    return content
+            for message in reversed(messages):
+                content = getattr(message, "content", None)
+                if content:
+                    return content
+
+    if result is None:
+        return None
+
+    return str(result)
+
+
+def _wrap_mcp_tools_with_tracing(tools: List[Any]) -> List[Any]:
+    wrapped_tools = []
+    for tool in tools:
+        tool_name = getattr(tool, "name", "unknown_tool")
+        description = getattr(tool, "description", "") or "MCP tool"
+        args_schema = getattr(tool, "args_schema", None)
+        return_direct = getattr(tool, "return_direct", False)
+
+        def _sync_call(*, _tool=tool, _name=tool_name, **kwargs):
+            span_name = f"mcp_tool.{_name}"
+            with tracer.start_as_current_span(span_name) as span:
+                span.set_attribute("tool_name", _name)
+                span.set_attribute("arguments", json.dumps(kwargs, default=str))
+                try:
+                    result = _tool.invoke(kwargs)
+                    span.set_attribute("result_size", len(str(result)))
+                    span.set_attribute("success", True)
+                    return result
+                except Exception as e:
+                    span.record_exception(e)
+                    span.set_attribute("success", False)
+                    raise
+
+        async def _async_call(*, _tool=tool, _name=tool_name, **kwargs):
+            span_name = f"mcp_tool.{_name}"
+            with tracer.start_as_current_span(span_name) as span:
+                span.set_attribute("tool_name", _name)
+                span.set_attribute("arguments", json.dumps(kwargs, default=str))
+                try:
+                    if hasattr(_tool, "ainvoke"):
+                        result = await _tool.ainvoke(kwargs)
+                    else:
+                        result = await asyncio.to_thread(_tool.invoke, kwargs)
+                    span.set_attribute("result_size", len(str(result)))
+                    span.set_attribute("success", True)
+                    return result
+                except Exception as e:
+                    span.record_exception(e)
+                    span.set_attribute("success", False)
+                    raise
+
+        wrapped_tools.append(
+            StructuredTool.from_function(
+                func=_sync_call,
+                coroutine=_async_call,
+                name=tool_name,
+                description=description,
+                args_schema=args_schema,
+                return_direct=return_direct
+            )
+        )
+
+    return wrapped_tools
+
+
 # ============================================================================
 # MAIN CHAT ENDPOINT (OPTIMIZED WITH SHORTCUT + UNIFIED ROUTING)
 # ============================================================================
@@ -686,6 +841,8 @@ async def chat_endpoint(request: ChatRequest):
         logger.info(f"   Conversation ID: {conversation_id}")
         logger.info(f"   User ID: {request.user_id}")
         
+        
+
         # ============================================================
         # Get available MCP tools
         # ============================================================
@@ -708,6 +865,8 @@ async def chat_endpoint(request: ChatRequest):
         intent = decision["intent"]
         confidence = decision["confidence"]
         chosen_path = decision["path"]
+
+        chosen_path="shortcut" if chosen_path == "shortcut" else "mcp"
         
         # Log to ClickHouse: User message
         if clickhouse_logger:
@@ -775,29 +934,24 @@ async def chat_endpoint(request: ChatRequest):
             # ========================================================
             # MCP FAST PATH - Tool already selected by unified LLM!
             # ========================================================
-            tool_name = decision['mcp_tool']
-            tool_params = decision['mcp_parameters']
-            
             logger.info(f"🚀 MCP Fast Path:")
-            logger.info(f"   Tool: {tool_name}")
-            logger.info(f"   Parameters: {tool_params}")
+            logger.info("   Using LangChain agent tool selection")
             
             try:
-                # Call MCP tool directly - no additional LLM call needed!
-                tool_result = await call_mcp_tool_dynamic(tool_name, tool_params)
-                
-                metadata["mcp_execution"] = {
-                    "tool": tool_name,
-                    "parameters": tool_params,
-                    "success": True
-                }
-                
-                # Synthesize natural language response
-                response_text = await synthesize_mcp_response_with_llm(
+                langchain_result = await try_langchain_mcp_resolution(
                     query,
-                    tool_name,
-                    tool_result
+                    conversation_id,
+                    request.user_id
                 )
+
+                if langchain_result:
+                    response_text = langchain_result["response"]
+                    metadata["mcp_execution"] = {
+                        "success": True,
+                        "method": langchain_result["method"]
+                    }
+                else:
+                    raise RuntimeError("LangChain MCP agent did not return a response")
                 
                 path_taken = "mcp"
                 logger.info(f"✅ MCP execution successful")
@@ -891,43 +1045,80 @@ async def call_mcp_tool_dynamic(tool_name: str, parameters: Dict) -> Dict[str, A
     with tracer.start_as_current_span("call_mcp_tool_dynamic") as span:
         span.set_attribute("tool_name", tool_name)
         span.set_attribute("parameters", json.dumps(parameters))
-        
-        # Map tool names to MCP client methods
-        tool_method_map = {
-            "mbta_get_alerts": mcp_client.get_alerts,
-            "mbta_get_routes": mcp_client.get_routes,
-            "mbta_get_stops": mcp_client.get_stops,
-            "mbta_search_stops": mcp_client.search_stops,
-            "mbta_get_predictions": mcp_client.get_predictions,
-            "mbta_get_predictions_for_stop": mcp_client.get_predictions_for_stop,
-            "mbta_get_schedules": mcp_client.get_schedules,
-            "mbta_get_trips": mcp_client.get_trips,
-            "mbta_get_vehicles": mcp_client.get_vehicles,
-            "mbta_get_nearby_stops": mcp_client.get_nearby_stops,
-            "mbta_plan_trip": mcp_client.plan_trip,
-            "mbta_list_all_routes": mcp_client.list_all_routes,
-            "mbta_list_all_stops": mcp_client.list_all_stops,
-            "mbta_list_all_alerts": mcp_client.list_all_alerts,
-        }
-        
-        if tool_name not in tool_method_map:
-            raise ValueError(f"Unknown MCP tool: {tool_name}")
-        
-        method = tool_method_map[tool_name]
-        
+
+        if not mcp_client or not mcp_client._initialized:
+            raise RuntimeError("MCP client is not initialized")
+
+        if hasattr(mcp_client, "_available_tools") and mcp_client._available_tools:
+            available_names = {tool.name for tool in mcp_client._available_tools}
+            if tool_name not in available_names:
+                raise ValueError(f"Unknown MCP tool: {tool_name}")
+
+        normalized_params = _normalize_mcp_parameters(tool_name, parameters)
+
         try:
-            logger.info(f"🔧 Calling {tool_name} with params: {parameters}")
-            result = await method(**parameters)
+            logger.info(f"🔧 Calling {tool_name} with params: {normalized_params}")
+            result = await mcp_client.call_tool(tool_name, normalized_params)
             span.set_attribute("success", True)
             span.set_attribute("result_size", len(str(result)))
             logger.info(f"✓ Tool execution successful")
             return result
-            
+
         except Exception as e:
             logger.error(f"Error calling {tool_name}: {e}", exc_info=True)
             span.record_exception(e)
             span.set_attribute("success", False)
             raise
+
+
+def _normalize_mcp_parameters(tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    if tool_name != "mbta_plan_trip":
+        return parameters
+
+    normalized = dict(parameters)
+
+    if "from_location" not in normalized and "from" in normalized:
+        normalized["from_location"] = normalized.pop("from")
+
+    if "to_location" not in normalized and "to" in normalized:
+        normalized["to_location"] = normalized.pop("to")
+
+    def _parse_lat_lon(value: Optional[Any]) -> Optional[tuple[float, float]]:
+        if not isinstance(value, str):
+            return None
+        parts = [part.strip() for part in value.split(",")]
+        if len(parts) != 2:
+            return None
+        try:
+            return float(parts[0]), float(parts[1])
+        except ValueError:
+            return None
+
+    if "origin_lat" not in normalized or "origin_lon" not in normalized:
+        from_location = normalized.get("from_location")
+        coords = _parse_lat_lon(from_location)
+        if coords:
+            normalized.setdefault("origin_lat", coords[0])
+            normalized.setdefault("origin_lon", coords[1])
+
+    if "dest_lat" not in normalized or "dest_lon" not in normalized:
+        to_location = normalized.get("to_location")
+        coords = _parse_lat_lon(to_location)
+        if coords:
+            normalized.setdefault("dest_lat", coords[0])
+            normalized.setdefault("dest_lon", coords[1])
+
+    allowed_keys = {
+        "origin_lat",
+        "origin_lon",
+        "dest_lat",
+        "dest_lon",
+        "from_location",
+        "to_location",
+        "datetime",
+        "arrive_by"
+    }
+    return {key: value for key, value in normalized.items() if key in allowed_keys}
 
 
 # ============================================================================

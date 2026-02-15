@@ -9,7 +9,9 @@ requests>=2.31.0
 # AI / LLM
 openai>=1.6.0
 langgraph>=0.2.0
-langchain-core>=0.1.0
+langchain>=1.2.10
+langchain-openai>=1.1.9
+langchain-mcp-adapters>=0.2.1
 
 # MCP (Model Context Protocol)
 mcp>=0.1.0
