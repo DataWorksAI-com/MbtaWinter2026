@@ -34,9 +34,7 @@ data:
   # Application
   LOG_LEVEL: "INFO"
 
-  # Which LLM provider to use: "anthropic" or "openai" (auto-detected if not set)
-LLM_PROVIDER: "anthropic"
-
-# Optional model overrides
-ANTHROPIC_MODEL: "claude-sonnet-4-20250514"
-OPENAI_MODEL: "gpt-4o-mini"
+  # LLM Provider config
+  LLM_PROVIDER: "anthropic"
+  ANTHROPIC_MODEL: "claude-sonnet-4-20250514"
+  OPENAI_MODEL: "gpt-4o-mini"
