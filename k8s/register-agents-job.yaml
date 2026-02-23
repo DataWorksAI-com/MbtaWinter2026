@@ -42,6 +42,9 @@ spec:
                   "protocol": "a2a",
                   "transport": "slim"
                 }'
+              curl -s -X PUT http://registry:6900/agents/mbta-alerts/status \
+                -H "Content-Type: application/json" \
+                -d '{"alive": true, "capabilities": ["alerts", "service_status", "delays", "disruptions"], "description": "Monitors and reports MBTA service alerts, delays, and disruptions for all transit lines including Red, Orange, Blue, Green, Silver, Commuter Rail, Bus, and Ferry. Provides real-time alert information."}'
 
               echo ""
               echo "Registering Planner Agent..."
@@ -58,6 +61,9 @@ spec:
                   "protocol": "a2a",
                   "transport": "slim"
                 }'
+              curl -s -X PUT http://registry:6900/agents/mbta-planner/status \
+                -H "Content-Type: application/json" \
+                -d '{"alive": true, "capabilities": ["trip_planning", "route_finding", "transfers", "schedules"], "description": "Plans transit routes between locations in the Boston MBTA network. Can find optimal routes, transfers, and provide trip planning assistance using real-time schedule data."}'
 
               echo ""
               echo "Registering StopFinder Agent..."
@@ -74,7 +80,10 @@ spec:
                   "protocol": "a2a",
                   "transport": "slim"
                 }'
+              curl -s -X PUT http://registry:6900/agents/mbta-stopfinder/status \
+                -H "Content-Type: application/json" \
+                -d '{"alive": true, "capabilities": ["stop_search", "station_info", "accessibility", "nearby_stops"], "description": "Finds MBTA stops and stations by name, location, or route. Provides stop details including accessibility, available routes, and nearby connections."}'
 
               echo ""
-              echo "✅ All agents registered!"
+              echo "✅ All agents registered and marked alive!"
               curl -s http://registry:6900/list | head -100
