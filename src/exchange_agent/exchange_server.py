@@ -52,22 +52,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Verify API key is loaded
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    logger.error("=" * 60)
-    logger.error("❌ OPENAI_API_KEY not found in environment!")
-    logger.error("=" * 60)
-    logger.error("Please ensure .env file exists in project root with:")
-    logger.error("  OPENAI_API_KEY=sk-...")
-    logger.error("=" * 60)
-    sys.exit(1)
-else:
-    logger.info(f"✓ OpenAI API key loaded (ends with: ...{api_key[-4:]})")
+# Initialize LLM client (provider-agnostic: Anthropic or OpenAI)
+try:
+    from .llm_client import get_llm_client
+except ImportError:
+    from src.exchange_agent.llm_client import get_llm_client
 
-# Initialize OpenAI client
-from openai import OpenAI
-openai_client = OpenAI(api_key=api_key)
+try:
+    llm = get_llm_client()
+    logger.info(f"✓ LLM provider: {llm.provider}")
+except RuntimeError as e:
+    logger.error(f"❌ LLM client failed: {e}")
+    import sys
+    sys.exit(1)
 
 # Global instances
 mcp_client: Optional[MCPClient] = None
@@ -560,22 +557,11 @@ Analyze this query and provide complete routing decision."""
 
         try:
             with tracer.start_as_current_span("llm_unified_routing") as llm_span:
-                llm_span.set_attribute("model", "gpt-4o-mini")
+                llm_span.set_attribute("model", llm.provider)
                 llm_span.set_attribute("purpose", "intent_classification_and_routing")
                 
                 # Make single LLM call
-                response = await asyncio.to_thread(
-                    openai_client.chat.completions.create,
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
-                    ],
-                    temperature=0.3,
-                    max_tokens=300
-                )
-                
-                decision_text = response.choices[0].message.content.strip()
+                decision_text = await llm.complete(system=system_prompt, user=user_message, max_tokens=300, temperature=0.3)
                 
                 # Remove markdown formatting if present
                 if decision_text.startswith("```json"):
@@ -987,18 +973,7 @@ Convert this to a natural, helpful answer."""
             span.set_attribute("tool_name", tool_name)
             span.set_attribute("result_size", len(tool_result_str))
             
-            response = await asyncio.to_thread(
-                openai_client.chat.completions.create,
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=0.7,
-                max_tokens=500
-            )
-            
-            synthesized_response = response.choices[0].message.content.strip()
+            synthesized_response = await llm.complete(system=system_prompt, user=user_message, max_tokens=500, temperature=0.7)
             span.set_attribute("response_length", len(synthesized_response))
             
             logger.info(f"✓ Response synthesized ({len(synthesized_response)} chars)")
