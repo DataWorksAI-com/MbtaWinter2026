@@ -1,750 +1,599 @@
 # MBTA Winter 2026
-## Hybrid Protocol Transit Intelligence System
-A Distributed multi-agent system serving Boston's MBTA network with intelligent MCP+A2A protocol orchestration via SLIM transport and NANDA Registry Federation
 
-<img width="1206" height="829" alt="image" src="https://github.com/user-attachments/assets/ec898cb6-2178-4caa-bd17-2ffba024e21d" />
+A distributed multi-agent transit intelligence system for Boston's MBTA network, with hybrid MCP+A2A protocol orchestration via SLIM transport, deployed on Akamai Cloud using Linode Kubernetes Engine (LKE).
 
----
+## Overview
 
-## 🎯 **What This Is**
+This system demonstrates **hybrid protocol orchestration** by combining multiple agent communication standards into a unified transit assistant:
 
-MBTA Winter 2026 demonstrates **hybrid protocol orchestration** by combining:
-- **Anthropic's MCP** (Model Context Protocol) for fast, single-tool queries (~400ms)
-- **NANDA/Google's A2A** (Agent-to-Agent) for complex multi-agent coordination (~1500ms)
-- **Cisco's SLIM** (Semantic Language Interface for Multi-agent) transport for standardized A2A communication
-- **Intelligent LLM routing** that achieves **25x performance improvement** for simple queries
+- **MCP** (Model Context Protocol) — fast single-tool queries (~400ms)
+- **A2A** (Agent-to-Agent) — complex multi-agent coordination (~1500ms)
+- **SLIM** (Semantic Language Interface for Multi-agent) — efficient A2A transport over gRPC
+- **NANDA Registry** — dynamic agent discovery and semantic lookup
+- **Intelligent LLM routing** — 25x performance improvement for simple queries
 
----
+The project supports two deployment modes:
+1. **Cloud (LKE)** — Terraform-provisioned Kubernetes on Akamai Cloud
+2. **Local development** — Docker Compose on your machine
 
-## 🏗️ **System Architecture**
+## Technology Stack
+
+- **Backend:** Python 3.11, FastAPI
+- **Orchestration:** LangGraph, LangChain
+- **AI/ML:** OpenAI GPT-4o-mini (routing, synthesis, extraction)
+- **Protocols:** MCP, A2A, SLIM (Cisco agntcy-app-sdk, a2a-sdk)
+- **Observability:** OpenTelemetry, Jaeger, Grafana, ClickHouse
+- **Deployment:** Terraform → Linode Kubernetes Engine (LKE)
+- **Local dev:** Docker Compose
+
+## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌────────────────┐
-│  Frontend UI    │────▶│ Exchange Agent   │────▶│ NANDA Registry │
-│  (Port 3000)    │     │ (Port 8100)      │     │ (Port 6900)    │
-│                 │     │                  │     │                │
-│ WebSocket Chat  │     │ Protocol Router  │     │ Agent Discovery│
-└─────────────────┘     └────┬─────────┬───┘     └────────────────┘
-                             │         │
-                    ┌────────┘         └────────┐
-                    ▼                           ▼
-            ┌──────────────┐          ┌─────────────────────┐
-            │  MCP Client  │          │ SLIM A2A Transport  │
-            │  (stdio)     │          │ (gRPC on ports      │
-            │              │          │  50051-50053)       │
-            │ 32 MBTA Tools│          │                     │
-            │ 400ms resp.  │          │ ┌─────────────────┐ │
-            └──────────────┘          │ │ A2A Agents      │ │
-                                      │ │ • Alerts        │ │
-                                      │ │ • Planner       │ │
-                                      │ │ • StopFinder    │ │
-                                      │ │ (Port 8001-8003)│ │
-                                      │ └─────────────────┘ │
-                                      └─────────────────────┘
-                                      
-┌─────────────────────────────────────────────────────────┐
-│  Observability Stack                                    │
-│  • Jaeger (16686)  • Grafana (3001)                     │
-│  • ClickHouse (8123)  • OTEL Collector (4317)           │
-└─────────────────────────────────────────────────────────┘
+┌─────────────┐     ┌────────────────┐     ┌────────────────┐
+│  Frontend   │────▶│ Exchange Agent │────▶│ NANDA Registry │
+│  (3000)     │ WS  │ (8100)         │     │ (6900)         │
+└─────────────┘     └──┬──────────┬──┘     └────────────────┘
+                       │          │
+              ┌────────┘          └─────────┐
+              ▼                             ▼
+       ┌────────────┐            ┌───────────────────┐
+       │ MCP Client │            │ SLIM A2A Transport │
+       │ (stdio)    │            │                   │
+       │ 32 tools   │            │ Alerts    (50051) │
+       │ ~400ms     │            │ Planner   (50052) │
+       └────────────┘            │ StopFinder(50053) │
+                                 └───────────────────┘
+
+┌─────────────────────────────────────────────────────┐
+│  Observability: Jaeger (16686) · Grafana (3001)     │
+│  ClickHouse (8123) · OTEL Collector (4317)          │
+└─────────────────────────────────────────────────────┘
 ```
 
-**4-Server Deployment:**
-1. **Exchange Server** - Protocol gateway, intelligent routing, frontend UI
-2. **Agents Server** - 3 specialized A2A agents (SLIM enabled)
-3. **Registry Server** - NANDA agent discovery and semantic agent lookup
-4. **Observability Server** - Distributed tracing, metrics, analytics
+## Prerequisites
+
+- [Linode/Akamai account](https://cloud.linode.com/) with API token
+- [OpenAI API key](https://platform.openai.com/)
+- [MBTA API key](https://api-v3.mbta.com/)
+- [Terraform](https://developer.hashicorp.com/terraform/install) (≥ 1.0)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [Docker](https://docs.docker.com/get-docker/)
 
 ---
 
-## 🚀 **Quick Start - Complete Deployment**
+## Cloud Deployment (LKE)
 
-### Prerequisites
-
-1. **Linode CLI** (for cloud deployment)
-```bash
-pip install linode-cli
-linode-cli configure
-```
-
-2. **API Keys**
-- MBTA API Key: Get from https://api-v3.mbta.com/
-- OpenAI API Key: Get from https://platform.openai.com/
-
-3. **Time Required**
-- Total: ~40 minutes for all 4 servers
-- Per server: ~8-10 minutes
-
----
-
-## 📝 **Step-by-Step Deployment**
-
-### Step 1: Deploy NANDA Registry (8-10 min)
+### 1. Clone this repository
 
 ```bash
-bash deploy_registry_with_ui.sh
+git clone https://github.com/DataWorksAI-com/MbtaWinter2026
+cd MbtaWinter2026
 ```
 
-**What it does:**
-- Creates Linode instance
-- Installs MongoDB
-- Deploys registry API (port 6900)
-- Deploys registry UI dashboard
-- Enables semantic agent discovery
+### 2. Create a Linode API token
 
-**Save this info from output:**
-```
-Registry IP: XXX.XXX.XXX.XXX
-Registry URL: http://XXX.XXX.XXX.XXX:6900
-Dashboard: http://XXX.XXX.XXX.XXX
-```
+In the [Akamai Cloud Console](https://cloud.linode.com/profile/tokens), create an API token with **read/write** permissions for **Kubernetes** and **Linodes**, and **read** permissions for **Events**.
 
----
-
-### Step 2: Deploy MBTA Agents with SLIM Transport (8-10 min)
+### 3. Configure Terraform variables
 
 ```bash
-bash deploy-agents-only.sh "YOUR_MBTA_API_KEY" "YOUR_OPENAI_API_KEY"
+cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+# Edit terraform.tfvars — add your Linode API token
 ```
 
-**Replace:**
-- `YOUR_MBTA_API_KEY` with your actual key (e.g., `c845eff5ae504179bc9cfa69914059de`)
-- `YOUR_OPENAI_API_KEY` with your actual key (e.g., `sk-proj-...`)
+Key variables in `terraform/terraform.tfvars`:
 
-**What it does:**
-- Creates Linode instance
-- Installs agntcy-app-sdk and a2a-sdk (SLIM support)
-- Deploys 3 A2A agents with SLIM servers:
-  - Alerts Agent (HTTP on 8001 + SLIM on 50051)
-  - Planner Agent (HTTP on 8002 + SLIM on 50052)
-  - StopFinder Agent (HTTP on 8003 + SLIM on 50053)
-- Configures both HTTP (fallback) and SLIM (primary) transports
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `linode_token` | *(required)* | Linode API token |
+| `region` | `us-east` | Akamai Cloud region (Newark, NJ — close to Boston) |
+| `cluster_label` | `mbta-winter-2026` | LKE cluster name |
+| `k8s_version` | `1.34` | Kubernetes version |
+| `lke_node_type` | `g6-standard-2` | Node size (4 GB shared) |
+| `lke_node_count` | `3` | Worker node count |
 
-**Save this info from output:**
+### 4. Apply Terraform configuration
+
+Provision the LKE cluster:
+
+macOS:
+```bash
+cd terraform
+terraform init
+terraform plan
+terraform apply
 ```
-Agents IP: XXX.XXX.XXX.XXX
-Password: <save this>
-SSH Key: mbta-agents-key
-
-SLIM Ports: 50051, 50052, 50053
-HTTP Ports: 8001, 8002, 8003 (fallback)
+Windows:
+```PowerShell
+cd terraform
+terraform init
+terraform plan -var-file="terraform.tfvars"
+terraform apply -var-file="terraform.tfvars"
 ```
 
----
-
-### Step 3: Deploy Exchange + Frontend (8-10 min)
+### 5. Capture Terraform outputs
 
 ```bash
-bash deploy-exchange-only.sh "YOUR_OPENAI_API_KEY" "YOUR_MBTA_API_KEY" "AGENTS_IP"
+terraform output -json > terraform.output.json
 ```
 
-**Replace:**
-- `YOUR_OPENAI_API_KEY` with your key
-- `YOUR_MBTA_API_KEY` with your key
-- `AGENTS_IP` with IP from Step 2 (e.g., `96.126.111.107`)
+The kubeconfig is automatically written to `terraform/kubeconfig.yaml`.
 
-**What it does:**
-- Creates Linode instance
-- Installs agntcy-app-sdk (SLIM client support)
-- Deploys Exchange Agent (port 8100)
-  - Intelligent routing (MCP vs A2A)
-  - SLIM client for calling agents
-  - Query decomposition for multi-agent coordination
-- Deploys Frontend UI (port 3000)
-- Connects to agents server via SLIM transport
+### 6. Configure kubectl
 
-**Save this info from output:**
+macOS:
+```bash
+export KUBECONFIG=$(pwd)/kubeconfig.yaml
+kubectl get nodes
 ```
-Exchange IP: XXX.XXX.XXX.XXX
-Password: <save this>
-SSH Key: mbta-exchange-key
-
-USE_SLIM=true (environment variable set)
+Windows:
+```PowerShell
+$env:KUBECONFIG="$PWD\kubeconfig.yaml"
+kubectl get nodes
 ```
+You should see your LKE worker nodes in `Ready` state.
 
----
-
-### Step 4: Deploy Observability Stack (8-10 min)
+### 7. Create Kubernetes secrets
 
 ```bash
-bash deploy-observability.sh
+cd ..
+cp k8s/secrets.example.yaml k8s/secrets.yaml
 ```
 
-**What it does:**
-- Creates Linode instance
-- Deploys via Docker:
-  - Jaeger UI (port 16686)
-  - Grafana (port 3001)
-  - ClickHouse (port 8123)
-  - OTEL Collector (port 4317)
-- Configures SLIM trace export (OTLP gRPC)
+Edit `k8s/secrets.yaml` and replace the placeholder values with your base64-encoded API keys:
 
-**Save this info from output:**
+macOS:
+```bash
+echo -n "your-openai-api-key" | base64
+echo -n "your-mbta-api-key" | base64
 ```
-Observability IP: XXX.XXX.XXX.XXX
-Password: <save this>
-SSH Key: mbta-observability-key
-
-OTEL gRPC: 4317
-OTEL HTTP: 4318
+Windows:
+```PowerShell
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("your-openai-api-key"))
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("your-mbta-api-key"))
 ```
 
-**Configure Exchange & Agents to send traces:**
+### 8. Build and push container images
+
+Set your container registry (Docker Hub, Harbor, or any OCI registry):
+
+macOS:
+```bash
+export DOCKER_REGISTRY=docker.io/youruser   # or your Harbor URL
+bash deploy.sh build
+bash deploy.sh push
+```
+Windows:
+```PowerShell
+$env:DOCKER_REGISTRY="docker.io/youruser"
+
+docker build -f docker\Dockerfile.exchange -t $env:DOCKER_REGISTRY/mbta-exchange:1.0 .
+docker build -f docker\Dockerfile.agent -t $env:DOCKER_REGISTRY/mbta-agent:1.0 .
+docker build -f docker\Dockerfile.registry -t $env:DOCKER_REGISTRY/mbta-registry:1.0 .
+
+docker push $env:DOCKER_REGISTRY/mbta-exchange:1.0
+docker push $env:DOCKER_REGISTRY/mbta-agent:1.0
+docker push $env:DOCKER_REGISTRY/mbta-registry:1.0
+```
+
+This builds three images:
+- `mbta-exchange` — Exchange agent + frontend
+- `mbta-agent` — Shared agent image (alerts, planner, stopfinder)
+- `mbta-registry` — NANDA agent registry
+
+### 9. Deploy to Kubernetes
+
+macOS:
+```bash
+bash deploy.sh apply
+```
+Windows:
+```PowerShell
+kubectl apply -f k8s\
+```
+
+This will:
+1. Create the `mbta` namespace
+2. Apply ConfigMap and Secrets
+3. Deploy all services (exchange, frontend, 3 agents, registry, observability)
+4. Register agents in the NANDA registry
+5. Expose the frontend via a LoadBalancer
+
+### 10. Verify deployment
 
 ```bash
-# SSH to Exchange server
-ssh -i mbta-exchange-key root@EXCHANGE_IP
+# Check all pods are running
+kubectl -n mbta get pods
 
-# Add observability endpoint
-echo "OTEL_ENDPOINT=http://OBSERVABILITY_IP:4317" >> /opt/mbta-agentcy/.env
-
-# Restart services
-supervisorctl restart all
-exit
-
-# SSH to Agents server
-ssh -i mbta-agents-key root@AGENTS_IP
-
-# Add observability endpoint
-echo "OTEL_ENDPOINT=http://OBSERVABILITY_IP:4317" >> /opt/mbta-agents/.env
-
-# Restart services
-supervisorctl restart all
-exit
+# Get the frontend public IP
+kubectl -n mbta get svc frontend \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ```
 
----
+### 11. Test the system
 
-### Step 5: Register Agents in NANDA Registry (1 min)
-
+macOS:
 ```bash
-# Edit register_agents.sh first
-# Replace IP addresses with your actual IPs:
-# REGISTRY_URL="http://YOUR_REGISTRY_IP:6900"
-# agent_url: "http://YOUR_AGENTS_IP:8001" (HTTP endpoint for registry)
-
-# Then run:
-bash register_agents.sh
+FRONTEND_IP=$(kubectl -n mbta get svc frontend -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 ```
 
-**What it does:**
-- Registers 3 agents with semantic descriptions
-- Enables dynamic agent discovery via NANDA registry
-- Exchange Agent discovers agents at runtime (not hardcoded)
-- Sets agent status to "alive"
+Windows:
+```PowerShell
+$FRONTEND_IP = kubectl -n mbta get svc frontend -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+```
+#### Health check
 
----
-
-## ✅ **Verify Everything Works**
-
-### Test 1: Check All Services
-
+macOS:
 ```bash
-# Registry
-curl http://REGISTRY_IP:6900/health
-
-# Agents (HTTP endpoints)
-curl http://AGENTS_IP:8001/health
-curl http://AGENTS_IP:8002/health
-curl http://AGENTS_IP:8003/health
-
-# Exchange
-curl http://EXCHANGE_IP:8100/
-
-# Observability
-curl http://OBSERVABILITY_IP:16686
+curl http://${FRONTEND_IP}:3000/
+```
+Windows:
+```PowerShell
+curl http://$FRONTEND_IP`:3000/
 ```
 
-**All should return healthy status!**
+#### Simple query (MCP fast path ~400ms)
 
----
-
-### Test 2: Verify SLIM Agents Running
-
+macOS:
 ```bash
-# SSH to agents server
-ssh -i mbta-agents-key root@AGENTS_IP
-
-# Check SLIM services
-sudo supervisorctl status | grep slim
-
-# Should show:
-# mbta-alerts-slim    RUNNING
-# mbta-planner-slim   RUNNING
-# mbta-stopfinder-slim RUNNING
-```
-
----
-
-### Test 3: Test SLIM Transport
-
-```bash
-# Check if SLIM agents are responding
-curl http://AGENTS_IP:50051/.well-known/agent-card.json
-curl http://AGENTS_IP:50052/.well-known/agent-card.json
-curl http://AGENTS_IP:50053/.well-known/agent-card.json
-
-# Should return AgentCard JSON with capabilities
-```
-
----
-
-### Test 4: Send a Query (MCP Fast Path)
-
-```bash
-curl -X POST http://EXCHANGE_IP:8100/chat \
+curl -X POST http://exchange:8100/chat \
   -H "Content-Type: application/json" \
   -d '{"query": "Red Line delays?"}'
 ```
-
-**Expected response:**
-```json
-{
-  "response": "Good news! There are currently no service alerts...",
-  "path": "mcp",
-  "latency_ms": 400,
-  "intent": "alerts",
-  "confidence": 0.95,
-  "metadata": {
-    "tools_used": ["mbta_get_alerts"]
-  }
-}
+Windows:
+```PowerShell
+curl -Method POST http://$FRONTEND_IP`:8100/chat `
+  -Headers @{"Content-Type"="application/json"} `
+  -Body '{"query": "Red Line delays?"}'
 ```
 
----
+#### Complex query (A2A via SLIM ~1500ms)
 
-### Test 5: Send Complex Query (A2A Path via SLIM)
-
+macOS:
 ```bash
-curl -X POST http://EXCHANGE_IP:8100/chat \
+curl -X POST http://exchange:8100/chat \
   -H "Content-Type: application/json" \
   -d '{"query": "How do I get from Harvard to MIT?"}'
 ```
-
-**Expected response:**
-```json
-{
-  "response": "Take the Red Line from Harvard to Kendall/MIT...",
-  "path": "a2a",
-  "latency_ms": 1500,
-  "intent": "trip_planning",
-  "confidence": 0.95,
-  "metadata": {
-    "agents_called": ["mbta-route-planner"],
-    "transport": "slim"
-  }
-}
+Windows:
+```PowerShell
+curl -Method POST http://$FRONTEND_IP`:8100/chat `
+  -Headers @{"Content-Type"="application/json"} `
+  -Body '{"query": "How do I get from Harvard to MIT?"}'
 ```
 
-**The agents_called field shows SLIM was used to communicate.**
+Open `http://<FRONTEND_IP>:3000` in your browser to use the chat interface.
+
+### 12. View distributed traces
+
+Port-forward Jaeger to your machine:
+
+```bash
+kubectl -n mbta port-forward svc/jaeger 16686:16686
+```
+
+Open http://localhost:16686, select service `exchange-agent`, and click **Find Traces**.
 
 ---
 
-### Test 6: Open Web UI
+## Local Development (Docker Compose)
+
+For local development without cloud infrastructure:
+
+### 1. Configure environment
+
+```bash
+cp .env.example .env
+# Edit .env — add your OPENAI_API_KEY and MBTA_API_KEY
+```
+
+### 2. Start all services
+
+```bash
+docker compose up --build
+```
+
+### 3. Access the system
+
+| Service | URL |
+|---------|-----|
+| Frontend (Chat UI) | http://localhost:3000 |
+| Exchange API | http://localhost:8100 |
+| Jaeger (Traces) | http://localhost:16686 |
+| Grafana (Metrics) | http://localhost:3001 |
+| NANDA Registry | http://localhost:6900 |
+
+### 4. Register agents (first time only)
+
+macOS:
+```bash
+# Wait for services to start, then register agents
+curl -s -X POST http://localhost:6900/register \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"mbta-alerts","name":"MBTA Alerts Agent","agent_url":"http://alerts-agent:8001","status":"alive"}'
+
+curl -s -X POST http://localhost:6900/register \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"mbta-planner","name":"MBTA Planner Agent","agent_url":"http://planner-agent:8002","status":"alive"}'
+
+curl -s -X POST http://localhost:6900/register \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"mbta-stopfinder","name":"MBTA StopFinder Agent","agent_url":"http://stopfinder-agent:8003","status":"alive"}'
 
 ```
-http://EXCHANGE_IP:3000
+Windows:
+```PowerShell
+$REGISTRY_URL = "http://localhost:6900/register"
+
+curl.exe -s -X POST $REGISTRY_URL `
+  -H "Content-Type: application/json" `
+  -d '{"agent_id":"mbta-alerts","name":"MBTA Alerts Agent","agent_url":"http://alerts-agent:8001","status":"alive"}'
+
+curl.exe -s -X POST $REGISTRY_URL `
+  -H "Content-Type: application/json" `
+  -d '{"agent_id":"mbta-planner","name":"MBTA Planner Agent","agent_url":"http://planner-agent:8002","status":"alive"}'
+
+curl.exe -s -X POST $REGISTRY_URL `
+  -H "Content-Type: application/json" `
+  -d '{"agent_id":"mbta-stopfinder","name":"MBTA StopFinder Agent","agent_url":"http://stopfinder-agent:8003","status":"alive"}'
 ```
 
-**You should see:**
-- Chat interface
-- Real-time responses
-- System internals panel showing routing decisions and transport used
+### 5. Stop services
+
+```bash
+docker compose down          # Stop containers
+docker compose down -v       # Stop and remove volumes
+```
 
 ---
 
-### Test 7: View Distributed Traces (Including SLIM Spans)
+## Project Structure
 
 ```
-http://OBSERVABILITY_IP:16686
+MbtaWinter2026/
+├── src/
+│   ├── exchange_agent/              # Protocol gateway + routing
+│   │   ├── exchange_server.py       # FastAPI server (port 8100)
+│   │   ├── mcp_client.py            # MCP stdio client
+│   │   ├── slim_client.py           # SLIM transport client
+│   │   └── stategraph_orchestrator.py # LangGraph A2A orchestration
+│   ├── agents/                      # A2A specialized agents
+│   │   ├── alerts/                  # Service alerts (8001 / 50051)
+│   │   ├── planner/                 # Trip planning (8002 / 50052)
+│   │   └── stopfinder/              # Stop search (8003 / 50053)
+│   ├── frontend/                    # Chat UI (port 3000)
+│   │   ├── chat_server.py
+│   │   └── static/
+│   ├── registry/                    # NANDA agent registry (port 6900)
+│   │   ├── registry.py              # Flask registry server
+│   │   ├── agent_facts_server.py    # Agent facts API
+│   │   ├── requirements.txt         # Registry-specific deps
+│   │   └── static/
+│   │       └── registry-ui.html     # Dashboard UI
+│   └── observability/               # OTel, metrics, traces
+│       ├── otel_config.py
+│       ├── clickhouse_logger.py
+│       ├── metrics.py
+│       └── traces.py
+│
+├── terraform/                       # LKE infrastructure
+│   ├── main.tf                      # LKE cluster resource
+│   ├── variables.tf                 # Input variables
+│   ├── outputs.tf                   # Cluster outputs
+│   └── terraform.tfvars.example     # Variable template
+│
+├── k8s/                             # Kubernetes manifests
+│   ├── namespace.yaml
+│   ├── configmap.yaml
+│   ├── secrets.example.yaml
+│   ├── exchange.yaml
+│   ├── frontend.yaml
+│   ├── alerts-agent.yaml
+│   ├── planner-agent.yaml
+│   ├── stopfinder-agent.yaml
+│   ├── registry.yaml
+│   ├── observability.yaml
+│   └── register-agents-job.yaml
+│
+├── docker/                          # Dockerfiles + configs
+│   ├── Dockerfile.exchange
+│   ├── Dockerfile.agent
+│   ├── Dockerfile.registry
+│   └── otel-collector-config.yaml
+│
+├── charts/
+│   └── workload.example.yaml        # App Platform workload template
+│
+├── docker-compose.yaml              # Local development
+├── deploy.sh                        # Build/push/deploy helper
+├── requirements.txt                 # Python dependencies
+├── .env.example                     # Environment variable template
+└── .gitignore
 ```
 
-**In Jaeger UI:**
-1. Select service: `exchange-agent`
-2. Click "Find Traces"
-3. Open an A2A trace (1500ms+)
-4. You should see spans including:
-   - `slim_client.call_agent` (SLIM transport timing)
-   - `agent_response_extraction` (parsing response)
-   - Individual agent processing times
+## Configuration
 
----
+The system uses environment variables for all configuration. Key variables:
 
-## 📊 **System URLs Reference**
+| Variable | Service | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | Exchange, Planner | OpenAI API key |
+| `MBTA_API_KEY` | All agents | MBTA v3 API key |
+| `USE_SLIM` | Exchange | Enable SLIM transport (`true`/`false`) |
+| `REGISTRY_URL` | Exchange | NANDA registry endpoint |
+| `EXCHANGE_AGENT_URL` | Frontend | Exchange server endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | All | OpenTelemetry collector |
+| `CLICKHOUSE_HOST` | Exchange | ClickHouse analytics host |
 
-After deployment, save these URLs:
+In Kubernetes, these are managed via ConfigMap (`k8s/configmap.yaml`) and Secrets (`k8s/secrets.yaml`).
 
+## API Endpoints
+
+### Exchange Agent (port 8100)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Health check |
+| `POST` | `/chat` | Send a query (auto-routes MCP vs A2A) |
+
+### Agents (ports 8001–8003)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/a2a/message` | A2A message endpoint |
+| `GET` | `/alerts?route=Red` | Direct alerts query (alerts agent) |
+| `GET` | `/plan?origin=X&destination=Y` | Direct plan query (planner agent) |
+| `GET` | `/stops?query=X` | Direct stop query (stopfinder agent) |
+
+### Registry (port 6900)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/list` | List registered agents |
+| `POST` | `/register` | Register an agent |
+
+## Cleanup
+
+### Delete Kubernetes resources
+
+macOS:
+```bash
+bash deploy.sh destroy
 ```
-Frontend UI:        http://EXCHANGE_IP:3000
-Exchange API:       http://EXCHANGE_IP:8100
-
-MBTA Agents (HTTP):
-  Alerts:           http://AGENTS_IP:8001
-  Planner:          http://AGENTS_IP:8002
-  StopFinder:       http://AGENTS_IP:8003
-
-MBTA Agents (SLIM):
-  Alerts:           grpc://AGENTS_IP:50051
-  Planner:          grpc://AGENTS_IP:50052
-  StopFinder:       grpc://AGENTS_IP:50053
-
-NANDA Registry:
-  Dashboard:        http://REGISTRY_IP
-  API:              http://REGISTRY_IP:6900
-
-Observability:
-  Jaeger UI:        http://OBSERVABILITY_IP:16686
-  Grafana:          http://OBSERVABILITY_IP:3001
-  ClickHouse:       http://OBSERVABILITY_IP:8123
+Windows:
+```PowerShell
+kubectl delete -f k8s\
 ```
 
----
+### Destroy LKE cluster (Terraform)
 
-## 🛠️ **Troubleshooting**
+macOS:
+```bash
+cd terraform
+terraform destroy
+```
+Windows:
+```PowerShell
+cd terraform
+terraform destroy -var-file="terraform.tfvars"
+```
 
-### Services Not Starting?
+### Remove local Docker resources
 
 ```bash
-# SSH to the server
-ssh -i <SSH_KEY> root@<SERVER_IP>
+docker compose down -v
+```
+macOS:
+```bash
+docker rmi $(docker images 'mbta-*' -q) 2>/dev/null || true
+```
+Windows:
+```PowerShell
+docker images "mbta-*" -q | ForEach-Object { docker rmi $_ }
+```
+## Redeploy (no cleanup)
 
-# Check service status
-supervisorctl status
+If the LKE cluster already exists and you did not run cleanup, you can redeploy in-place:
 
-# View logs
-tail -f /var/log/mbta-*.log
+macOS:
+```bash
+# Build and push updated images
+export DOCKER_REGISTRY=docker.io/youruser
+bash deploy.sh build
 
-# Restart services
-supervisorctl restart all
+# Re-apply manifests
+bash deploy.sh apply
+```
+Windows:
+```PowerShell
+$env:DOCKER_REGISTRY="docker.io/youruser"
+
+docker build -f docker\Dockerfile.exchange -t $env:DOCKER_REGISTRY/mbta-exchange:1.0 .
+docker build -f docker\Dockerfile.agent -t $env:DOCKER_REGISTRY/mbta-agent:1.0 .
+docker build -f docker\Dockerfile.registry -t $env:DOCKER_REGISTRY/mbta-registry:1.0 .
+
+docker push $env:DOCKER_REGISTRY/mbta-exchange:1.0
+docker push $env:DOCKER_REGISTRY/mbta-agent:1.0
+docker push $env:DOCKER_REGISTRY/mbta-registry:1.0
+```
+If you only changed Kubernetes manifests and not the images:
+
+macOS:
+```bash
+bash deploy.sh apply
+```
+Windows:
+```PowerShell
+kubectl apply -f k8s\
 ```
 
-### SLIM Agents Not Running?
+## Troubleshooting
+
+### Pods not starting?
 
 ```bash
-# SSH to agents server
-ssh -i mbta-agents-key root@AGENTS_IP
-
-# Check SLIM service status
-supervisorctl status mbta-alerts-slim
-supervisorctl status mbta-planner-slim
-supervisorctl status mbta-stopfinder-slim
-
-# View SLIM logs
-tail -50 /var/log/mbta-alerts-slim.err.log
-tail -50 /var/log/mbta-planner-slim.err.log
-tail -50 /var/log/mbta-stopfinder-slim.err.log
-
-# If not running, restart
-supervisorctl restart mbta-alerts-slim mbta-planner-slim mbta-stopfinder-slim
+kubectl -n mbta get pods
+kubectl -n mbta describe pod <pod-name>
+kubectl -n mbta logs <pod-name> -c <container-name>
 ```
 
-### SLIM Client Connection Issues?
+### Quick logs for each service
 
 ```bash
-# SSH to exchange server
-ssh -i mbta-exchange-key root@EXCHANGE_IP
+# Exchange + frontend
+kubectl -n mbta logs deploy/exchange --tail=200
+kubectl -n mbta logs deploy/frontend --tail=200
 
-# Check if USE_SLIM is enabled
-cat /opt/mbta-agentcy/.env | grep USE_SLIM
-# Should show: USE_SLIM=true
+# Agents (HTTP container)
+kubectl -n mbta logs deploy/alerts-agent -c alerts-http --tail=200
+kubectl -n mbta logs deploy/planner-agent -c planner-http --tail=200
+kubectl -n mbta logs deploy/stopfinder-agent -c stopfinder-http --tail=200
 
-# Check exchange logs for SLIM errors
-tail -100 /var/log/mbta-exchange.err.log | grep -i slim
+# Registry
+kubectl -n mbta logs deploy/registry -c registry --tail=200
 
-# Verify can reach SLIM agents
-curl -v grpc://AGENTS_IP:50051/
-# (gRPC connections won't respond like HTTP, but firewall should allow)
+# Observability
+kubectl -n mbta logs deploy/otel-collector --tail=200
+kubectl -n mbta logs deploy/jaeger --tail=200
+kubectl -n mbta logs deploy/clickhouse --tail=200
+kubectl -n mbta logs deploy/grafana --tail=200
 ```
 
-### MCP Client Issues?
+### SLIM agents not responding?
 
 ```bash
-# Check if mbta-mcp is installed
-ssh -i mbta-exchange-key root@EXCHANGE_IP
-source /opt/mbta-agentcy/venv/bin/activate
-python -c "import mbta_mcp; print('OK')"
-
-# Reinstall if needed
-pip install git+https://github.com/cubismod/mbta-mcp.git --force-reinstall
-supervisorctl restart mbta-exchange
+# Check both containers in an agent pod
+kubectl -n mbta logs -l app=alerts-agent -c alerts-http
+kubectl -n mbta logs -l app=alerts-agent -c alerts-slim
 ```
 
-### Agents Not Registered?
+### Agents not registered?
 
 ```bash
 # Check registry
-curl http://REGISTRY_IP:6900/list
+kubectl -n mbta exec deploy/exchange -- curl -s http://registry:6900/list
 
-# Re-register
-bash register_agents.sh
-
-# Verify each agent
-curl http://REGISTRY_IP:6900/agents/mbta-alerts
-curl http://REGISTRY_IP:6900/agents/mbta-planner
-curl http://REGISTRY_IP:6900/agents/mbta-stopfinder
+# Re-run registration job
+kubectl -n mbta delete job register-agents
+kubectl apply -f k8s/register-agents-job.yaml
 ```
 
-### No Traces in Jaeger?
+### No traces in Jaeger?
 
 ```bash
-# Check OTEL endpoint is configured
-ssh -i mbta-exchange-key root@EXCHANGE_IP
-cat /opt/mbta-agentcy/.env | grep OTEL
-
-# Should show:
-# OTEL_ENDPOINT=http://OBSERVABILITY_IP:4317
-
-# If missing, add it:
-echo "OTEL_ENDPOINT=http://OBSERVABILITY_IP:4317" >> /opt/mbta-agentcy/.env
-supervisorctl restart all
+# Verify OTEL collector is receiving data
+kubectl -n mbta logs deploy/otel-collector
 ```
 
 ---
 
-## 🧹 **Cleanup / Deletion**
+## Links
 
-### Delete a Single Server
-
-```bash
-# Get instance ID from deployment output
-linode-cli linodes delete <INSTANCE_ID>
-```
-
-### Delete Everything
-
-```bash
-# List all MBTA instances
-linode-cli linodes list --format "id,label,tags" --text
-
-# Delete each one
-linode-cli linodes delete <ID1>
-linode-cli linodes delete <ID2>
-linode-cli linodes delete <ID3>
-linode-cli linodes delete <ID4>
-```
-
-**Warning:** This permanently deletes all data and servers!
-
----
-
-
-
-### Key Files for SLIM Implementation
-
-**Exchange Agent (Client):**
-- `/opt/mbta-agentcy/src/exchange_agent/slim_client.py` - Creates SLIM clients
-- `/opt/mbta-agentcy/src/exchange_agent/stategraph_orchestrator.py` - Uses SLIM for A2A calls
-
-**Agent Servers (Servers):**
-- `/opt/mbta-agents/agents/alerts/slim_wrapper.py` - SLIM-enabled alerts agent
-- `/opt/mbta-agents/agents/planner/slim_wrapper.py` - SLIM-enabled planner agent
-- `/opt/mbta-agents/agents/stopfinder/slim_wrapper.py` - SLIM-enabled stopfinder agent
-
----
-
-## 🔧 **Local Development (Optional)**
-
-### Run Locally Without Deployment
-
-**Requirements:**
-- Python 3.12+
-- Docker Desktop (for observability)
-
-**Setup:**
-
-```bash
-# 1. Create virtual environment
-python3.12 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Create .env file
-cp .env.example .env
-# Edit .env and add your API keys
-
-# 4. Install SLIM SDKs
-pip install agntcy-app-sdk a2a-sdk
-
-# 5. Set SLIM mode
-echo "USE_SLIM=true" >> .env
-
-# 6. Start observability (optional)
-docker compose -f docker-compose-observability.yml up -d
-
-# 7. Run agents with SLIM (in separate terminals)
-python -m agents.alerts.slim_wrapper
-python -m agents.planner.slim_wrapper
-python -m agents.stopfinder.slim_wrapper
-
-# 8. Run exchange agent (uses SLIM client)
-python -m src.exchange_agent.exchange_server
-
-# 9. Run frontend
-python -m src.frontend.chat_server
-```
-
-**Access locally:**
-- Frontend: http://localhost:3000
-- Exchange: http://localhost:8100
-- Jaeger: http://localhost:16686
-
----
-
-## 📚 **Project Structure**
-
-```
-mbta-agentcy/
-├── src/
-│   ├── exchange_agent/          # Protocol gateway & intelligent routing
-│   │   ├── exchange_server.py   # Main FastAPI server
-│   │   ├── mcp_client.py        # MCP protocol implementation
-│   │   ├── slim_client.py       # SLIM transport client (A2A over gRPC)
-│   │   └── stategraph_orchestrator.py  # A2A coordination via SLIM
-│   │
-│   ├── agents/                  # A2A specialized agents
-│   │   ├── alerts/
-│   │   │   ├── main.py          # HTTP A2A server (port 8001)
-│   │   │   └── slim_wrapper.py  # SLIM A2A server (port 50051)
-│   │   ├── planner/
-│   │   │   ├── main.py          # HTTP A2A server (port 8002)
-│   │   │   └── slim_wrapper.py  # SLIM A2A server (port 50052)
-│   │   └── stopfinder/
-│   │       ├── main.py          # HTTP A2A server (port 8003)
-│   │       └── slim_wrapper.py  # SLIM A2A server (port 50053)
-│   │
-│   ├── frontend/                # Web UI
-│   │   ├── chat_server.py       # WebSocket server
-│   │   └── static/              # CSS/JS assets
-│   │
-│   └── observability/           # Telemetry & monitoring
-│       ├── otel_config.py       # OpenTelemetry setup
-│       ├── clickhouse_logger.py # Analytics logging
-│       ├── metrics.py           # Metrics collection
-│       └── traces.py            # Tracing utilities
-│
-├── docker/
-│   └── otel-collector-config.yaml  # Telemetry routing config
-│
-├── deploy-agents-only.sh        # Deploy agents with SLIM
-├── deploy-exchange-only.sh      # Deploy exchange with SLIM client
-├── deploy-observability.sh      # Deploy observability
-├── deploy_registry_with_ui.sh   # Deploy NANDA registry
-├── register_agents.sh           # Register agents in registry
-├── registry-ui.html             # Registry dashboard
-├── docker-compose-observability.yml  # Optional local observability
-└── requirements.txt             # Python dependencies
-```
-
----
-
-## 🧪 **Technology Stack**
-
-### Protocols & Frameworks
-- **MCP** - Anthropic's Model Context Protocol (stdio transport)
-- **A2A** - NANDA/Google Agent-to-Agent protocol (HTTP/JSON)
-- **SLIM** - Cisco transport for A2A over gRPC (binary, efficient)
-- **HTTPS/TLS** - Secure transport between services
-
-### Core Technologies
-- **Python 3.12** - Primary language
-- **FastAPI** - Web framework for all services
-- **LangGraph** - Multi-agent orchestration
-- **OpenAI GPT-4o-mini** - Classification, routing, synthesis
-- **agntcy-app-sdk** - SLIM client factory
-- **a2a-sdk** - A2A server and types
-
-### Observability
-- **OpenTelemetry** - Distributed tracing standard (OTLP over gRPC)
-- **Jaeger** - Trace visualization
-- **Grafana** - Metrics dashboards
-- **ClickHouse** - Time-series analytics
-
-### Infrastructure
-- **Linode Cloud** - 4 Ubuntu 22.04 instances
-- **Docker** - Observability containerization
-- **Supervisor** - Process management for agents/exchange
-- **Nginx** - Web server for registry UI
-
----
-
-## 🔐 **Security Considerations**
-
-### Current Implementation
-✅ **HTTPS with TLS** between all services
-✅ **API key authentication** for OpenAI/MBTA
-✅ **Cloud firewall** rules restricting ports
-✅ **SSH key-only** access (no password login)
-✅ **SLIM transport** isolated on internal ports (50051-50053)
-
-### Production Hardening Needed
-⏭️ Mutual TLS (mTLS) for SLIM gRPC connections
-⏭️ W3C Verifiable Credentials (NANDA spec)
-⏭️ Ed25519 cryptographic signing for agents
-⏭️ Zero Trust Agentic Access (ZTAA) framework
-⏭️ Secrets management (Vault/AWS Secrets Manager)
-
-**Note:** Current security is sufficient for research/demo. Production deployment serving real transit authority would require full security stack per NANDA specifications.
-
----
-
-## 🔗 **Quick Links**
-
-- **NANDA Project:** https://nanda.media.mit.edu/
-- **AGNTCY Docs:** https://docs.agntcy.org/
-- **MCP Specification:** https://modelcontextprotocol.io/
-- **A2A Protocol:** https://github.com/google/a2a
-- **SLIM Transport:** https://github.com/cisco-open/agentcy
-
----
-
-## ⚡ **Quick Reference Commands**
-
-```bash
-# Deploy everything (run in order)
-bash deploy_registry_with_ui.sh
-bash deploy-agents-only.sh <MBTA_KEY> <OPENAI_KEY>
-bash deploy-exchange-only.sh <OPENAI_KEY> <MBTA_KEY> <AGENTS_IP>
-bash deploy-observability.sh
-bash register_agents.sh
-
-# Test the system
-curl http://EXCHANGE_IP:8100/
-curl -X POST http://EXCHANGE_IP:8100/chat -d '{"query":"Red Line delays?"}'
-
-# Test SLIM agents directly
-curl http://AGENTS_IP:50051/.well-known/agent-card.json
-curl http://AGENTS_IP:50052/.well-known/agent-card.json
-curl http://AGENTS_IP:50053/.well-known/agent-card.json
-
-# Check SLIM services running
-ssh -i mbta-agents-key root@AGENTS_IP
-sudo supervisorctl status | grep slim
-
-# View traces (including SLIM spans)
-# Open: http://OBSERVABILITY_IP:16686
-
-# Access UI
-# Open: http://EXCHANGE_IP:3000
-
-# SSH to servers
-ssh -i mbta-exchange-key root@EXCHANGE_IP
-ssh -i mbta-agents-key root@AGENTS_IP
-ssh -i mbta-observability-key root@OBSERVABILITY_IP
-ssh -i Northeastern-registry-v3-key root@REGISTRY_IP
-
-# Delete everything
-linode-cli linodes list
-linode-cli linodes delete <INSTANCE_ID>
-```
-
----
-
-## 📖 **Documentation Files**
-
-For deeper understanding of the system:
-- **SLIM_and_AGNTCY_SDK_Explained.md** - Detailed explanation of SLIM transport and SDK usage
-- **Architecture Diagrams** - Visual representation of protocol flows
-- **Performance Analysis** - Benchmarks and latency breakdowns
-- **Protocol Comparison** - MCP vs A2A vs SLIM characteristics
+- [NANDA Project](https://nanda.media.mit.edu/)
+- [AGNTCY / SLIM Docs](https://docs.agntcy.org/)
+- [MCP Specification](https://modelcontextprotocol.io/)
+- [A2A Protocol](https://github.com/google/a2a)
+- [Akamai LKE Docs](https://www.linode.com/docs/products/compute/kubernetes/)
+- [Terraform Linode Provider](https://registry.terraform.io/providers/linode/linode/latest/docs)
