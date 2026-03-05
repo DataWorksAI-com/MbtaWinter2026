@@ -52,7 +52,7 @@ The project supports two deployment modes:
 
 ## Deployment
 
-![MBTA System Deployment Diagram](deployment.png)
+![MBTA System Deployment Diagram](deployment-1.png)
 
 ## Prerequisites
 
