@@ -40,7 +40,7 @@ class LLMClient:
         if self.provider == "anthropic":
             response = await asyncio.to_thread(
                 self.client.messages.create,
-                model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+                model=os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": user}]
