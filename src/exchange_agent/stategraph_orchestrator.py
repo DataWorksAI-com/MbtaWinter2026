@@ -29,8 +29,8 @@ except ImportError:
 tracer = trace.get_tracer(__name__)
 logger = logging.getLogger(__name__)
 
-raw = await llm.complete(system="", user=prompt, max_tokens=300)
-result = json.loads(raw)
+# raw = await llm.complete(system="", user=prompt, max_tokens=300)
+# result = json.loads(raw)
 
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://23.92.17.180:6900")
 
