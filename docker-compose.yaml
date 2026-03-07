@@ -28,6 +28,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - MBTA_API_KEY=${MBTA_API_KEY}
       - USE_SLIM=true
       - REGISTRY_URL=http://registry:6900
