@@ -154,14 +154,33 @@ Return JSON:
 """
         
         try:
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
+            # response = openai_client.chat.completions.create(
+            #     model="gpt-4o-mini",
+            #     messages=[{"role": "user", "content": prompt}],
+            #     temperature=0.3,
+            #     response_format={"type": "json_object"}
+            # )
             
-            result = json.loads(response.choices[0].message.content)
+            # result = json.loads(response.choices[0].message.content)
+            
+            raw = await llm.complete(
+                system="", 
+                user=prompt, 
+                max_tokens=300,
+                temperature=0.3, 
+                response_schema={
+                    "type": "object",
+                    "properties": {
+                        "matched_agents": {"type": "array", "items": {"type": "string"}},
+                        "reasoning": {"type": "string"},
+                        "confidence": {"type": "number"}
+                    },
+                    "required": ["matched_agents", "reasoning", "confidence"],
+                    "additionalProperties": False
+                }
+            )
+            result = json.loads(raw.strip())
+            
             matched_agent_ids = result.get("matched_agents", [])
             
             matched_configs = []
@@ -320,15 +339,21 @@ Keep queries concise and focused. If the original query doesn't have a relevant 
 """
 
         try:
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=300,
-                response_format={"type": "json_object"}
-            )
+            # response = openai_client.chat.completions.create(
+            #     model="gpt-4o-mini",
+            #     messages=[{"role": "user", "content": prompt}],
+            #     temperature=0.2,
+            #     max_tokens=300,
+            #     response_format={"type": "json_object"}
+            # )
             
-            agent_queries = json.loads(response.choices[0].message.content)
+            # agent_queries = json.loads(response.choices[0].message.content)
+            
+            raw = await llm.complete(system="", user=prompt, max_tokens=300, temperature=0.3, response_schema={
+                "type": "object",
+                "additionalProperties": {"type": "string"}
+            })
+            agent_queries = json.loads(raw.strip())
             
             logger.info(f"✅ Query decomposed:")
             for agent_id, query in agent_queries.items():

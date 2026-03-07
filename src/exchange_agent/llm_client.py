@@ -7,6 +7,8 @@ import os
 import asyncio
 from typing import Optional
 
+from anthropic import Omit
+
 
 class LLMClient:
     def __init__(self):
@@ -35,7 +37,14 @@ class LLMClient:
             from openai import OpenAI
             return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    async def complete(self, system: str, user: str, max_tokens: int = 500, temperature: float = 0.7) -> str:
+    async def complete(
+        self, 
+        system: str, 
+        user: str, 
+        max_tokens: int = 500, 
+        temperature: float = 0.7,
+        response_schema: dict | None = None
+    ) -> str:
         """Single unified interface for both providers."""
         if self.provider == "anthropic":
             response = await asyncio.to_thread(
@@ -43,7 +52,8 @@ class LLMClient:
                 model=os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
                 max_tokens=max_tokens,
                 system=system,
-                messages=[{"role": "user", "content": user}]
+                messages=[{"role": "user", "content": user}],
+                output_config={"format": {"type": "json_schema", "schema": response_schema}} if response_schema else Omit()
             )
             return response.content[0].text.strip()
         else:
@@ -55,7 +65,8 @@ class LLMClient:
                     {"role": "user", "content": user}
                 ],
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"} if response_schema else None,
             )
             return response.choices[0].message.content.strip()
 

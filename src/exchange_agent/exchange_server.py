@@ -561,7 +561,26 @@ Analyze this query and provide complete routing decision."""
                 llm_span.set_attribute("purpose", "intent_classification_and_routing")
                 
                 # Make single LLM call
-                decision_text = await llm.complete(system=system_prompt, user=user_message, max_tokens=300, temperature=0.3)
+                decision_text = await llm.complete(
+                    system=system_prompt, 
+                    user=user_message, 
+                    max_tokens=300, 
+                    temperature=0.3,
+                    response_schema={
+                        "type": "object",
+                        "properties": {
+                            "intent": {"type": "string"},
+                            "confidence": {"type": "number"},
+                            "path": {"type": "string", "enum": ["mcp", "a2a"]},
+                            "reasoning": {"type": "string"},
+                            "complexity": {"type": "number"},
+                            "mcp_tool": {"type": "string"},
+                            "mcp_parameters": {"type": "object", "additionalProperties": False}
+                        },
+                        "required": ["intent", "confidence", "path", "reasoning", "complexity"],
+                        "additionalProperties": False
+                    }
+                )
                 
                 # Remove markdown formatting if present
                 if decision_text.startswith("```json"):
@@ -973,7 +992,12 @@ Convert this to a natural, helpful answer."""
             span.set_attribute("tool_name", tool_name)
             span.set_attribute("result_size", len(tool_result_str))
             
-            synthesized_response = await llm.complete(system=system_prompt, user=user_message, max_tokens=500, temperature=0.7)
+            synthesized_response = await llm.complete(
+                system=system_prompt, 
+                user=user_message, 
+                max_tokens=500, 
+                temperature=0.7,
+            )
             span.set_attribute("response_length", len(synthesized_response))
             
             logger.info(f"✓ Response synthesized ({len(synthesized_response)} chars)")
