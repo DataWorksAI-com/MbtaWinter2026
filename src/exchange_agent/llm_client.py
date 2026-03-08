@@ -53,6 +53,7 @@ class LLMClient:
             from anthropic import Omit
             response = await self.client.messages.create(
                 model=os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+                temperature=temperature,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": user}],
