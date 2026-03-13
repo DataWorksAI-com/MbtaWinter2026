@@ -61,7 +61,7 @@ async def get_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MBTA Agentcy - Transit Intelligence</title>
+    <title>MBTA Agntcy - Transit Intelligence</title>
     <style>
         * {
             margin: 0;
@@ -71,7 +71,11 @@ async def get_ui():
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background-image: url('/static/bgbg.jpg');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            background-repeat: no-repeat;
             height: 100vh;
             display: flex;
             justify-content: center;
@@ -79,6 +83,19 @@ async def get_ui():
             padding: 20px;
             position: relative;
             overflow: hidden;
+        }
+        
+        /* Subtle overlay for better contrast */
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at top, rgba(102,126,234,0.1) 0%, rgba(118,75,162,0.2) 100%);
+            pointer-events: none;
+            z-index: 0;
         }
 
         /* Weather Canvas */
@@ -225,22 +242,23 @@ async def get_ui():
         /* Protocol Override Controls */
         .protocol-controls {
             padding: 15px 30px;
-            background: #f0f0f0;
+            background: rgba(255, 255, 255, 0.95);
             border-top: 1px solid #e0e0e0;
             display: flex;
             align-items: center;
             gap: 10px;
+            backdrop-filter: blur(10px);
         }
 
         .protocol-label {
             font-size: 13px;
             font-weight: 600;
-            color: #555;
+            color: #333;
         }
 
         .protocol-button {
             padding: 8px 16px;
-            border: 2px solid #ddd;
+            border: 2px solid #d0d0d0;
             background: white;
             border-radius: 8px;
             cursor: pointer;
@@ -250,21 +268,27 @@ async def get_ui():
             display: flex;
             align-items: center;
             gap: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
         .protocol-button:hover {
             background: #f8f9fa;
             border-color: #667eea;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
         }
 
         .protocol-button.active {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
 
         .protocol-button.active:hover {
             background: linear-gradient(135deg, #5568d3 0%, #653a8b 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
         }
 
         .protocol-icon {
@@ -352,22 +376,25 @@ async def get_ui():
 
         .weather-info {
             margin-top: 10px;
-            padding: 8px 12px;
-            background: rgba(78, 205, 196, 0.1);
+            padding: 10px 14px;
+            background: rgba(78, 205, 196, 0.15);
             border-left: 3px solid #4ecdc4;
-            border-radius: 4px;
+            border-radius: 6px;
             font-size: 12px;
+            backdrop-filter: blur(8px);
         }
 
         .weather-info-title {
             font-weight: 600;
             color: #4ecdc4;
-            margin-bottom: 4px;
+            margin-bottom: 6px;
+            font-size: 13px;
         }
 
         .weather-info-detail {
-            color: #aaa;
+            color: #d0d0d0;
             font-size: 11px;
+            line-height: 1.4;
         }
 
         .internals-content {
@@ -489,6 +516,84 @@ async def get_ui():
         .internals-panel ::-webkit-scrollbar-thumb {
             background: #4ecdc4;
         }
+
+        /* Little moving train at the bottom */
+        .train-layer {
+            position: fixed;
+            bottom: 8px;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        .train-track {
+            position: relative;
+            width: 100%;
+            height: 40px;
+        }
+
+        .train-rail {
+            position: absolute;
+            bottom: 6px;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: repeating-linear-gradient(
+                to right,
+                rgba(15, 23, 42, 0.7) 0,
+                rgba(15, 23, 42, 0.7) 20px,
+                transparent 20px,
+                transparent 40px
+            );
+            opacity: 0.9;
+        }
+
+        .train {
+            position: absolute;
+            bottom: 14px;
+            width: 80px;
+            height: 26px;
+            margin-left: -100px;
+            background: #111827;
+            border-radius: 8px;
+            box-shadow: 0 4px 0 rgba(15, 23, 42, 0.8), 0 0 20px rgba(253, 224, 71, 0.3);
+            animation: trainRide 15s linear infinite;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .train::before {
+            content: "";
+            position: absolute;
+            left: 8px;
+            top: 6px;
+            width: 22px;
+            height: 12px;
+            background: #fde047;
+            border-radius: 4px;
+            box-shadow: 0 0 12px rgba(253, 224, 71, 0.8), 0 0 24px rgba(253, 224, 71, 0.4);
+        }
+
+        .train::after {
+            content: "";
+            position: absolute;
+            bottom: -5px;
+            left: 10px;
+            width: 60px;
+            height: 5px;
+            background: repeating-linear-gradient(
+                to right,
+                #4b5563 0,
+                #4b5563 6px,
+                transparent 6px,
+                transparent 12px
+            );
+        }
+
+        @keyframes trainRide {
+            0%   { transform: translateX(0); }
+            100% { transform: translateX(110vw); }
+        }
     </style>
 </head>
 <body>
@@ -499,7 +604,7 @@ async def get_ui():
         <div class="chat-panel">
             <div class="chat-header">
                 <div class="header-left">
-                    <span>🚇 MBTA Agentcy</span>
+                    <span>🚇 MBTA Agntcy</span>
                     <span class="weather-indicator" id="weatherIcon">☁️</span>
                 </div>
                 <div class="connection-status">
@@ -511,7 +616,7 @@ async def get_ui():
             <div class="messages-container" id="messagesContainer">
                 <div class="message system">
                     <div class="message-content">
-                        Welcome to MBTA Agentcy! Ask about transit alerts, routes, or stations.
+                        Welcome to MBTA Agntcy! Ask about transit alerts, routes, or stations.
                     </div>
                 </div>
             </div>
@@ -562,6 +667,14 @@ async def get_ui():
                     <div class="info-value" style="color: #888;">Send a message to see routing details</div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Little moving train layer -->
+    <div class="train-layer">
+        <div class="train-track">
+            <div class="train-rail"></div>
+            <div class="train"></div>
         </div>
     </div>
 
