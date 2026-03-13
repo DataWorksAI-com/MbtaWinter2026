@@ -1,3 +1,4 @@
+﻿
 # src/frontend/chat_server.py
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -5,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict
+import os
 import httpx
 import json
 import logging
@@ -25,7 +27,8 @@ app.add_middleware(
 )
 
 # Configuration
-EXCHANGE_AGENT_URL = "http://exchange:8100"
+# Use docker-compose service URL when provided; fallback supports local dev.
+EXCHANGE_AGENT_URL = os.getenv("EXCHANGE_AGENT_URL", "http://localhost:8100")
 
 # Mount static files for images
 static_dir = Path(__file__).parent / "static"
@@ -54,124 +57,129 @@ manager = ConnectionManager()
 
 @app.get("/")
 async def get_ui():
-    """Serve the enhanced chat UI with Christmas theme"""
+    """Serve the enhanced chat UI with real-time weather effects and protocol override"""
     html_content = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MBTA Winter 2026 🎄 </title>
+    <title>MBTA Agentcy - Transit Intelligence</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background-image: url('/static/christmas-bg.jpg');
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-            background-repeat: no-repeat;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
-            overflow: hidden;
+            padding: 20px;
             position: relative;
+            overflow: hidden;
         }
-        
-        /* Festive overlay with slight blur effect */
-        body::before {
-            content: '';
-            position: absolute;
+
+        /* Weather Canvas */
+        #weatherCanvas {
+            position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: radial-gradient(circle at top, rgba(255,255,255,0.08) 0%, rgba(102,126,234,0.15) 100%);
-            backdrop-filter: blur(2px);
             pointer-events: none;
-            z-index: 0;
-        }
-        
-        .main-container {
-            width: 95%;
-            max-width: 1600px;
-            height: 90vh;
-            display: grid;
-            grid-template-columns: 1fr 400px;
-            gap: 20px;
-            position: relative;
             z-index: 1;
         }
-        
-        .chat-container {
-            background: rgba(255, 255, 255, 0.98);
+
+        .container {
+            width: 100%;
+            max-width: 1400px;
+            height: 90vh;
+            background: white;
             border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
-            display: flex;
-            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: grid;
+            grid-template-columns: 1fr 400px;
             overflow: hidden;
-            backdrop-filter: blur(10px);
+            position: relative;
+            z-index: 2;
+            min-height: 0;
         }
-        
-        .system-panel {
-            background: rgba(255, 255, 255, 0.97);
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
-            padding: 20px;
-            overflow-y: auto;
-            backdrop-filter: blur(10px);
+
+        /* Left Panel - Chat */
+        .chat-panel {
+            display: grid;
+            grid-template-rows: auto minmax(0, 1fr) auto auto;
+            border-right: 1px solid #e0e0e0;
+            min-height: 0;
+            overflow: hidden;
         }
-        
+
         .chat-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 25px;
+            padding: 20px 30px;
             font-size: 24px;
             font-weight: bold;
-            text-align: center;
             display: flex;
             align-items: center;
             justify-content: space-between;
         }
-        
+
         .header-left {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 15px;
         }
-        
-        .status-indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: #4ade80;
-            animation: pulse 2s infinite;
+
+        .weather-indicator {
+            font-size: 28px;
+            animation: pulse 2s ease-in-out infinite;
         }
-        
+
         @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
         }
-        
-        .chat-messages {
-            flex: 1;
+
+        .connection-status {
+            font-size: 12px;
+            padding: 4px 12px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff4444;
+        }
+
+        .status-dot.connected {
+            background: #00ff88;
+        }
+
+        .messages-container {
             overflow-y: auto;
-            padding: 30px;
-            background: rgba(249, 250, 251, 0.95);
+            padding: 20px 30px;
+            background: #f8f9fa;
+            min-height: 0;
+            overscroll-behavior: contain;
         }
-        
+
         .message {
             margin-bottom: 20px;
-            display: flex;
             animation: slideIn 0.3s ease-out;
         }
-        
+
         @keyframes slideIn {
             from {
                 opacity: 0;
@@ -182,65 +190,122 @@ async def get_ui():
                 transform: translateY(0);
             }
         }
-        
+
         .message.user {
-            justify-content: flex-end;
+            text-align: right;
         }
-        
+
         .message-content {
+            display: inline-block;
             max-width: 70%;
-            padding: 15px 20px;
+            padding: 12px 18px;
             border-radius: 18px;
             word-wrap: break-word;
-            white-space: pre-wrap;
         }
-        
+
         .message.user .message-content {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border-bottom-right-radius: 4px;
         }
-        
+
         .message.assistant .message-content {
             background: white;
-            color: #1f2937;
-            border: 1px solid #e5e7eb;
+            color: #333;
+            border: 1px solid #e0e0e0;
             border-bottom-left-radius: 4px;
+            text-align: left;
         }
-        
-        .message-metadata {
-            font-size: 11px;
-            color: #9ca3af;
-            margin-top: 5px;
+
+        .message.system {
+            text-align: center;
         }
-        
-        .chat-input-container {
-            padding: 20px;
+
+        .message.system .message-content {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+            font-size: 13px;
+            padding: 8px 14px;
+        }
+
+        /* Protocol Override Controls */
+        .protocol-controls {
+            padding: 15px 30px;
+            background: #f0f0f0;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .protocol-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .protocol-button {
+            padding: 8px 16px;
+            border: 2px solid #ddd;
             background: white;
-            border-top: 1px solid #e5e7eb;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
-        
-        .chat-input-wrapper {
+
+        .protocol-button:hover {
+            background: #f8f9fa;
+            border-color: #667eea;
+        }
+
+        .protocol-button.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+        }
+
+        .protocol-button.active:hover {
+            background: linear-gradient(135deg, #5568d3 0%, #653a8b 100%);
+        }
+
+        .protocol-icon {
+            font-size: 14px;
+        }
+
+        /* Input Area */
+        .input-area {
+            padding: 20px 30px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .input-container {
             display: flex;
             gap: 10px;
         }
-        
+
         #messageInput {
             flex: 1;
-            padding: 15px 20px;
-            border: 2px solid #e5e7eb;
+            padding: 14px 18px;
+            border: 2px solid #e0e0e0;
             border-radius: 25px;
             font-size: 15px;
             outline: none;
             transition: border-color 0.3s;
         }
-        
+
         #messageInput:focus {
             border-color: #667eea;
         }
-        
+
         #sendButton {
-            padding: 15px 30px;
+            padding: 14px 30px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
@@ -250,648 +315,707 @@ async def get_ui():
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
         }
-        
+
         #sendButton:hover {
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
-        
+
         #sendButton:active {
             transform: translateY(0);
         }
-        
+
         #sendButton:disabled {
-            background: #9ca3af;
+            opacity: 0.5;
             cursor: not-allowed;
             transform: none;
         }
-        
-        .typing-indicator {
-            display: none;
-            padding: 15px 20px;
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 18px;
-            border-bottom-left-radius: 4px;
-            width: fit-content;
-        }
-        
-        .typing-indicator.active {
-            display: block;
-        }
-        
-        .typing-indicator span {
-            height: 8px;
-            width: 8px;
-            background: #9ca3af;
-            border-radius: 50%;
-            display: inline-block;
-            margin: 0 2px;
-            animation: typing 1.4s infinite;
-        }
-        
-        .typing-indicator span:nth-child(2) {
-            animation-delay: 0.2s;
-        }
-        
-        .typing-indicator span:nth-child(3) {
-            animation-delay: 0.4s;
-        }
-        
-        @keyframes typing {
-            0%, 60%, 100% { transform: translateY(0); }
-            30% { transform: translateY(-10px); }
-        }
-        
-        /* System Panel Styles */
-        .system-header {
-            font-size: 20px;
-            font-weight: bold;
-            color: #1f2937;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #667eea;
-        }
 
-        .routing-switch {
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 12px;
-            margin-bottom: 16px;
-        }
-
-        .routing-switch-title {
-            font-size: 12px;
-            font-weight: 700;
-            color: #334155;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        .routing-options {
+        /* Right Panel - System Internals */
+        .internals-panel {
+            background: #1a1a2e;
+            color: #eee;
             display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
         }
 
-        .routing-option {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            color: #334155;
-            cursor: pointer;
-            user-select: none;
+        .internals-header {
+            padding: 20px;
+            background: #16213e;
+            border-bottom: 1px solid #2a2a4e;
         }
-        
-        .system-card {
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
+
+        .internals-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+
+        .internals-subtitle {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .weather-info {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(78, 205, 196, 0.1);
+            border-left: 3px solid #4ecdc4;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .weather-info-title {
+            font-weight: 600;
+            color: #4ecdc4;
+            margin-bottom: 4px;
+        }
+
+        .weather-info-detail {
+            color: #aaa;
+            font-size: 11px;
+        }
+
+        .internals-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            min-height: 0;
+            overscroll-behavior: contain;
+        }
+
+        .info-block {
+            background: #16213e;
+            border: 1px solid #2a2a4e;
+            border-radius: 8px;
             padding: 15px;
             margin-bottom: 15px;
-            animation: fadeIn 0.3s ease-out;
         }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateX(20px); }
-            to { opacity: 1; transform: translateX(0); }
+
+        .info-label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
         }
-        
-        .system-card-header {
-            font-weight: 600;
-            color: #667eea;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+
+        .info-value {
+            font-size: 14px;
+            color: #fff;
+            font-weight: 500;
         }
-        
+
         .badge {
             display: inline-block;
             padding: 4px 10px;
             border-radius: 12px;
             font-size: 11px;
             font-weight: 600;
-            text-transform: uppercase;
+            margin-right: 6px;
+            margin-bottom: 6px;
         }
-        
+
         .badge.mcp {
-            background: #dcfce7;
-            color: #15803d;
+            background: #4ecdc4;
+            color: #1a1a2e;
         }
-        
+
         .badge.a2a {
-            background: #dbeafe;
-            color: #1e40af;
-        }
-        
-        .badge.success {
-            background: #dcfce7;
-            color: #15803d;
-        }
-        
-        .badge.pending {
-            background: #fef3c7;
-            color: #92400e;
-        }
-        
-        .system-detail {
-            font-size: 13px;
-            color: #6b7280;
-            margin: 5px 0;
-        }
-        
-        .system-detail strong {
-            color: #1f2937;
-        }
-        
-        .agent-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 8px;
-        }
-        
-        .agent-chip {
-            background: #f3f4f6;
-            color: #4b5563;
-            padding: 6px 12px;
-            border-radius: 16px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        
-        .metrics {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        
-        .metric {
-            background: #f9fafb;
-            padding: 10px;
-            border-radius: 8px;
-            text-align: center;
-        }
-        
-        .metric-value {
-            font-size: 20px;
-            font-weight: bold;
-            color: #667eea;
-        }
-        
-        .metric-label {
-            font-size: 11px;
-            color: #6b7280;
-            text-transform: uppercase;
-        }
-        
-        @media (max-width: 1200px) {
-            .main-container {
-                grid-template-columns: 1fr;
-                grid-template-rows: 1fr auto;
-            }
-            
-            .system-panel {
-                max-height: 300px;
-            }
-        }
-
-        /* Little moving train at the bottom */
-        .train-layer {
-            position: fixed;
-            bottom: 8px;
-            left: 0;
-            width: 100%;
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        .train-track {
-            position: relative;
-            width: 100%;
-            height: 40px;
-        }
-
-        .train-rail {
-            position: absolute;
-            bottom: 6px;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: repeating-linear-gradient(
-                to right,
-                rgba(15, 23, 42, 0.7) 0,
-                rgba(15, 23, 42, 0.7) 20px,
-                transparent 20px,
-                transparent 40px
-            );
-            opacity: 0.9;
-        }
-
-        .train {
-            position: absolute;
-            bottom: 14px;
-            width: 80px;
-            height: 26px;
-            margin-left: -100px;
-            background: #111827;
-            border-radius: 8px;
-            box-shadow: 0 4px 0 rgba(15, 23, 42, 0.8);
-            animation: trainRide 15s linear infinite;
-        }
-
-        .train::before {
-            content: "";
-            position: absolute;
-            left: 8px;
-            top: 6px;
-            width: 22px;
-            height: 12px;
-            background: #fde047;
-            border-radius: 4px;
-            box-shadow: 0 0 8px rgba(253, 224, 71, 0.6);
-        }
-
-        .train::after {
-            content: "";
-            position: absolute;
-            bottom: -5px;
-            left: 10px;
-            width: 60px;
-            height: 5px;
-            background: repeating-linear-gradient(
-                to right,
-                #4b5563 0,
-                #4b5563 6px,
-                transparent 6px,
-                transparent 12px
-            );
-        }
-
-        @keyframes trainRide {
-            0%   { transform: translateX(0); }
-            100% { transform: translateX(110vw); }
-        }
-
-        /* Falling snow animation */
-        .snowflake {
-            position: fixed;
-            top: -10px;
-            z-index: 9999;
+            background: #ff6b6b;
             color: white;
-            font-size: 1em;
-            animation: fall linear infinite;
-            pointer-events: none;
         }
 
-        @keyframes fall {
-            to {
-                transform: translateY(100vh);
-            }
+        .badge.shortcut {
+            background: #95e1d3;
+            color: #1a1a2e;
+        }
+
+        .badge.fallback {
+            background: #ffa07a;
+            color: #1a1a2e;
+        }
+
+        .badge.override {
+            background: #ffd93d;
+            color: #1a1a2e;
+            animation: pulseBadge 1.5s infinite;
+        }
+
+        @keyframes pulseBadge {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .latency-bar {
+            height: 6px;
+            background: #2a2a4e;
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .latency-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4ecdc4, #667eea);
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .agent-list {
+            list-style: none;
+        }
+
+        .agent-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #2a2a4e;
+            font-size: 13px;
+        }
+
+        .agent-item:last-child {
+            border-bottom: none;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
+
+        .internals-panel ::-webkit-scrollbar-track {
+            background: #1a1a2e;
+        }
+
+        .internals-panel ::-webkit-scrollbar-thumb {
+            background: #4ecdc4;
         }
     </style>
 </head>
 <body>
-    <div class="main-container">
-        <!-- Chat Container -->
-        <div class="chat-container">
+    <canvas id="weatherCanvas"></canvas>
+
+    <div class="container">
+        <!-- Left Panel: Chat -->
+        <div class="chat-panel">
             <div class="chat-header">
                 <div class="header-left">
-                    <div class="status-indicator"></div>
-                    MBTA Winter 2026 🎄
+                    <span>🚇 MBTA Agentcy</span>
+                    <span class="weather-indicator" id="weatherIcon">☁️</span>
+                </div>
+                <div class="connection-status">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Connecting...</span>
                 </div>
             </div>
-            
-            <div class="chat-messages" id="messages">
-                <div style="text-align: center; color: #6b7280; padding: 40px;">
-                    <h2 style="margin-bottom: 10px; color: #1f2937;">👋 Welcome to MBTA Winter 2026!</h2>
-                    <p>Ask me anything about Boston's transit system</p>
-                    <p style="font-size: 13px; margin-top: 20px; opacity: 0.7;">
-                        Watch the system panel on the right to see how your queries are processed! →
-                    </p>
-                </div>
-                <div class="typing-indicator" id="typingIndicator">
-                    <span></span>
-                    <span></span>
-                    <span></span>
+
+            <div class="messages-container" id="messagesContainer">
+                <div class="message system">
+                    <div class="message-content">
+                        Welcome to MBTA Agentcy! Ask about transit alerts, routes, or stations.
+                    </div>
                 </div>
             </div>
-            
-            <div class="chat-input-container">
-                <div class="chat-input-wrapper">
+
+            <div class="protocol-controls">
+                <span class="protocol-label">Routing Mode:</span>
+                <button class="protocol-button active" data-protocol="auto" onclick="selectProtocol('auto')">
+                    <span class="protocol-icon">🤖</span>
+                    <span>Auto</span>
+                </button>
+                <button class="protocol-button" data-protocol="mcp" onclick="selectProtocol('mcp')">
+                    <span class="protocol-icon">⚡</span>
+                    <span>MCP</span>
+                </button>
+                <button class="protocol-button" data-protocol="a2a" onclick="selectProtocol('a2a')">
+                    <span class="protocol-icon">🔄</span>
+                    <span>A2A</span>
+                </button>
+            </div>
+
+            <div class="input-area">
+                <div class="input-container">
                     <input 
                         type="text" 
                         id="messageInput" 
-                        placeholder="Ask about routes, schedules, alerts..."
+                        placeholder="Ask about MBTA alerts, routes, or stations..."
                         onkeypress="handleKeyPress(event)"
-                    />
+                    >
                     <button id="sendButton" onclick="sendMessage()">Send</button>
                 </div>
             </div>
         </div>
 
-        <!-- System Visibility Panel -->
-        <div class="system-panel">
-            <div class="system-header">⚙️ System Internals</div>
-            <div class="routing-switch">
-                <div class="routing-switch-title">Decision Path</div>
-                <div class="routing-options">
-                    <label class="routing-option">
-                        <input type="radio" name="routingMode" value="auto" checked />
-                        Auto
-                    </label>
-                    <label class="routing-option">
-                        <input type="radio" name="routingMode" value="mcp" />
-                        MCP
-                    </label>
-                    <label class="routing-option">
-                        <input type="radio" name="routingMode" value="a2a" />
-                        A2A
-                    </label>
+        <!-- Right Panel: System Internals -->
+        <div class="internals-panel">
+            <div class="internals-header">
+                <div class="internals-title">System Internals</div>
+                <div class="internals-subtitle">Real-time routing & execution metrics</div>
+                <div class="weather-info" id="weatherInfo">
+                    <div class="weather-info-title">Loading weather...</div>
+                    <div class="weather-info-detail">Fetching Boston conditions...</div>
                 </div>
             </div>
-            <div id="systemLog"></div>
-        </div>
-    </div>
 
-    <!-- Little moving train layer -->
-    <div class="train-layer">
-        <div class="train-track">
-            <div class="train-rail"></div>
-            <div class="train"></div>
+            <div class="internals-content" id="internalsContent">
+                <div class="info-block">
+                    <div class="info-label">Waiting for query...</div>
+                    <div class="info-value" style="color: #888;">Send a message to see routing details</div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
-        let ws;
-        let conversationId = null;
-        
-        // Create falling snow
-        function createSnowflakes() {
-            const snowflakeCount = 50;
-            for (let i = 0; i < snowflakeCount; i++) {
-                setTimeout(() => {
-                    const snowflake = document.createElement('div');
-                    snowflake.className = 'snowflake';
-                    snowflake.textContent = '❄';
-                    snowflake.style.left = Math.random() * 100 + '%';
-                    snowflake.style.animationDuration = (Math.random() * 3 + 2) + 's';
-                    snowflake.style.opacity = Math.random();
-                    snowflake.style.fontSize = (Math.random() * 10 + 10) + 'px';
-                    
-                    document.body.appendChild(snowflake);
-                    
-                    // Remove after animation
-                    setTimeout(() => {
-                        snowflake.remove();
-                    }, 5000);
-                }, i * 100);
+        let ws = null;
+        let currentProtocol = 'auto';
+        let currentWeather = null;
+
+        // ============================================================
+        // WEATHER EFFECTS SYSTEM
+        // ============================================================
+
+        const canvas = document.getElementById('weatherCanvas');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        let particles = [];
+
+        class Particle {
+            constructor(type) {
+                this.type = type;
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height - canvas.height;
+                this.reset();
             }
-            
-            // Create new snowflakes every 5 seconds
-            setInterval(() => {
-                const snowflake = document.createElement('div');
-                snowflake.className = 'snowflake';
-                snowflake.textContent = '❄';
-                snowflake.style.left = Math.random() * 100 + '%';
-                snowflake.style.animationDuration = (Math.random() * 3 + 2) + 's';
-                snowflake.style.opacity = Math.random();
-                snowflake.style.fontSize = (Math.random() * 10 + 10) + 'px';
-                
-                document.body.appendChild(snowflake);
-                
-                setTimeout(() => {
-                    snowflake.remove();
-                }, 5000);
-            }, 100);
-        }
-        
-        function connect() {
-            ws = new WebSocket(`ws://${window.location.host}/ws`);
-            
-            ws.onopen = () => {
-                console.log('Connected to MBTA Winter 2026 🎄');
-                addSystemLog('system', 'WebSocket connected', {status: 'active'});
-            };
-            
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                handleMessage(data);
-            };
-            
-            ws.onclose = () => {
-                console.log('Disconnected. Reconnecting...');
-                addSystemLog('system', 'Connection lost. Reconnecting...', {status: 'reconnecting'});
-                setTimeout(connect, 3000);
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-        }
-        
-        function handleMessage(data) {
-            if (data.type === 'response') {
-                hideTypingIndicator();
-                addMessage('assistant', data.content, data.metadata);
-                conversationId = data.conversation_id;
-            } else if (data.type === 'system') {
-                addSystemLog(data.category, data.message, data.details);
-            } else if (data.type === 'error') {
-                hideTypingIndicator();
-                addMessage('assistant', '❌ ' + data.error, {error: true});
+
+            reset() {
+                if (this.type === 'snow') {
+                    this.speed = Math.random() * 1 + 0.5;
+                    this.radius = Math.random() * 3 + 1;
+                    this.wind = Math.random() * 0.5 - 0.25;
+                    this.opacity = Math.random() * 0.6 + 0.4;
+                } else if (this.type === 'rain') {
+                    this.speed = Math.random() * 5 + 10;
+                    this.length = Math.random() * 20 + 10;
+                    this.opacity = Math.random() * 0.4 + 0.3;
+                    this.wind = Math.random() * 2 - 1;
+                } else if (this.type === 'cloud') {
+                    this.speed = Math.random() * 0.3 + 0.1;
+                    this.radius = Math.random() * 30 + 20;
+                    this.opacity = Math.random() * 0.3 + 0.2;
+                    this.y = Math.random() * canvas.height * 0.3;
+                }
+            }
+
+            update() {
+                if (this.type === 'snow') {
+                    this.y += this.speed;
+                    this.x += this.wind;
+
+                    if (this.y > canvas.height) {
+                        this.y = -10;
+                        this.x = Math.random() * canvas.width;
+                    }
+                } else if (this.type === 'rain') {
+                    this.y += this.speed;
+                    this.x += this.wind;
+
+                    if (this.y > canvas.height) {
+                        this.y = -this.length;
+                        this.x = Math.random() * canvas.width;
+                    }
+                } else if (this.type === 'cloud') {
+                    this.x += this.speed;
+
+                    if (this.x > canvas.width + this.radius) {
+                        this.x = -this.radius;
+                    }
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.opacity;
+
+                if (this.type === 'snow') {
+                    ctx.fillStyle = 'white';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (this.type === 'rain') {
+                    ctx.strokeStyle = '#a0c4ff';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(this.x + this.wind * 2, this.y + this.length);
+                    ctx.stroke();
+                } else if (this.type === 'cloud') {
+                    ctx.fillStyle = 'white';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.arc(this.x + this.radius * 0.5, this.y - this.radius * 0.3, this.radius * 0.7, 0, Math.PI * 2);
+                    ctx.arc(this.x + this.radius, this.y, this.radius * 0.8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
             }
         }
 
-        function getSelectedRoutingMode() {
-            const selected = document.querySelector('input[name="routingMode"]:checked');
-            return selected ? selected.value : 'auto';
+        function setWeatherEffect(weatherCondition) {
+            particles = [];
+            
+            const weatherMap = {
+                'Clear': 'clear',
+                'Clouds': 'cloudy',
+                'Rain': 'rain',
+                'Drizzle': 'rain',
+                'Thunderstorm': 'rain',
+                'Snow': 'snow',
+                'Mist': 'cloudy',
+                'Fog': 'cloudy',
+                'Haze': 'cloudy'
+            };
+
+            const effect = weatherMap[weatherCondition] || 'clear';
+
+            if (effect === 'snow') {
+                for (let i = 0; i < 150; i++) {
+                    particles.push(new Particle('snow'));
+                }
+            } else if (effect === 'rain') {
+                for (let i = 0; i < 200; i++) {
+                    particles.push(new Particle('rain'));
+                }
+            } else if (effect === 'cloudy') {
+                for (let i = 0; i < 5; i++) {
+                    particles.push(new Particle('cloud'));
+                }
+            }
         }
-        
+
+        function animateWeather() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+
+            requestAnimationFrame(animateWeather);
+        }
+
+        animateWeather();
+
+        // ============================================================
+        // FETCH REAL WEATHER
+        // ============================================================
+
+        async function fetchWeather() {
+            try {
+                const response = await fetch(`https://wttr.in/Boston?format=j1`);
+                const data = await response.json();
+                
+                const current = data.current_condition[0];
+                const weatherDesc = current.weatherDesc[0].value;
+                const temp = current.temp_F;
+                const feelsLike = current.FeelsLikeF;
+                
+                let condition = 'Clear';
+                if (weatherDesc.toLowerCase().includes('snow')) {
+                    condition = 'Snow';
+                } else if (weatherDesc.toLowerCase().includes('rain')) {
+                    condition = 'Rain';
+                } else if (weatherDesc.toLowerCase().includes('cloud')) {
+                    condition = 'Clouds';
+                } else if (weatherDesc.toLowerCase().includes('clear') || weatherDesc.toLowerCase().includes('sunny')) {
+                    condition = 'Clear';
+                }
+                
+                currentWeather = {
+                    condition: condition,
+                    description: weatherDesc,
+                    temp: temp,
+                    feelsLike: feelsLike,
+                    location: 'Boston, MA'
+                };
+                
+                updateWeatherDisplay();
+                setWeatherEffect(condition);
+                
+            } catch (error) {
+                console.error('Weather fetch failed:', error);
+                currentWeather = {
+                    condition: 'Clear',
+                    description: 'Unable to fetch weather',
+                    temp: '--',
+                    feelsLike: '--',
+                    location: 'Boston, MA'
+                };
+                updateWeatherDisplay();
+            }
+        }
+
+        function updateWeatherDisplay() {
+            if (!currentWeather) return;
+
+            const iconMap = {
+                'Clear': '☀️',
+                'Clouds': '☁️',
+                'Rain': '🌧️',
+                'Drizzle': '🌦️',
+                'Thunderstorm': '⛈️',
+                'Snow': '❄️',
+                'Mist': '🌫️',
+                'Fog': '🌫️',
+                'Haze': '🌫️'
+            };
+
+            const icon = iconMap[currentWeather.condition] || '☁️';
+            document.getElementById('weatherIcon').textContent = icon;
+
+            const weatherInfo = document.getElementById('weatherInfo');
+            weatherInfo.innerHTML = `
+                <div class="weather-info-title">${icon} ${currentWeather.description}</div>
+                <div class="weather-info-detail">
+                    ${currentWeather.location} • ${currentWeather.temp}°F (feels like ${currentWeather.feelsLike}°F)
+                </div>
+            `;
+        }
+
+        fetchWeather();
+        setInterval(fetchWeather, 600000); // 10 minutes
+
+        // ============================================================
+        // PROTOCOL SELECTION
+        // ============================================================
+
+        function selectProtocol(protocol) {
+            currentProtocol = protocol;
+            
+            document.querySelectorAll('.protocol-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`[data-protocol="${protocol}"]`).classList.add('active');
+            
+            const mode = protocol === 'auto' ? 'Intelligent Auto-Routing' : 
+                        protocol === 'mcp' ? 'MCP Fast Path (forced)' : 
+                        'A2A Multi-Agent (forced)';
+            
+            addSystemMessage(`Routing mode: ${mode}`);
+        }
+
+        // ============================================================
+        // WEBSOCKET CONNECTION
+        // ============================================================
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.hostname}:${window.location.port}/ws`;
+            
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('statusDot').classList.add('connected');
+                document.getElementById('statusText').textContent = 'Connected';
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('Received:', data);
+
+                if (data.type === 'response') {
+                    addMessage('assistant', data.response);
+                    updateInternals(data.metadata);
+                } else if (data.type === 'error') {
+                    addMessage('system', `Error: ${data.message}`);
+                }
+
+                document.getElementById('sendButton').disabled = false;
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                document.getElementById('statusDot').classList.remove('connected');
+                document.getElementById('statusText').textContent = 'Error';
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('statusDot').classList.remove('connected');
+                document.getElementById('statusText').textContent = 'Disconnected';
+                
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
         function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
-            const routingMode = getSelectedRoutingMode();
-            
-            if (message && ws.readyState === WebSocket.OPEN) {
-                addMessage('user', message);
-                showTypingIndicator();
-                
-                // Add system log for user query
-                addSystemLog('input', 'User query received', {
-                    query: message,
-                    length: message.length,
-                    routing_mode: routingMode
-                });
-                
-                ws.send(JSON.stringify({
-                    message: message,
-                    conversation_id: conversationId,
-                    routing_mode: routingMode
-                }));
-                
-                input.value = '';
+
+            if (!message || !ws || ws.readyState !== WebSocket.OPEN) {
+                return;
             }
+
+            addMessage('user', message);
+
+            ws.send(JSON.stringify({
+                message: message,
+                force_protocol: currentProtocol
+            }));
+
+            input.value = '';
+            document.getElementById('sendButton').disabled = true;
+
+            updateInternals({
+                path: 'processing',
+                intent: 'analyzing...',
+                confidence: 0
+            });
         }
 
-        function escapeHtml(value) {
-            return String(value)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function formatAssistantContent(content) {
-            let text = escapeHtml(content || '');
-            text = text.replace(/\\r\\n/g, '\\n');
-            text = text.replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            text = text.replace(/(^|\\n)\\?\\?\\s+/g, '$1• ');
-            text = text.replace(/(^|\\n)-\\s+/g, '$1• ');
-            return text.replace(/\\n/g, '<br>');
-        }
-        
-        function addMessage(role, content, metadata = {}) {
-            const messagesDiv = document.getElementById('messages');
-            const welcomeMessage = messagesDiv.querySelector('div[style]');
-            if (welcomeMessage) {
-                welcomeMessage.remove();
-            }
-            
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${role}`;
-            
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            if (role === 'assistant') {
-                contentDiv.innerHTML = formatAssistantContent(content);
-            } else {
-                contentDiv.textContent = content;
-            }
-            
-            if (metadata.agents_called && metadata.agents_called.length > 0) {
-                const metadataDiv = document.createElement('div');
-                metadataDiv.className = 'message-metadata';
-                metadataDiv.textContent = `🤖 Agents: ${metadata.agents_called.join(', ')}`;
-                contentDiv.appendChild(metadataDiv);
-            }
-            
-            messageDiv.appendChild(contentDiv);
-            messagesDiv.insertBefore(messageDiv, document.getElementById('typingIndicator'));
-            
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-        
-        function addSystemLog(category, message, details = {}) {
-            const systemLog = document.getElementById('systemLog');
-            const card = document.createElement('div');
-            card.className = 'system-card';
-            
-            let badgeClass = 'badge';
-            let icon = '📊';
-            
-            if (category === 'routing') {
-                if (details.path === 'mcp') {
-                    badgeClass += ' mcp';
-                    icon = '⚡';
-                } else if (details.path === 'shortcut') {
-                    badgeClass += ' success';
-                    icon = '🧮';
-                } else {
-                    badgeClass += ' a2a';
-                    icon = '🔄';
-                }
-            } else if (category === 'agents') {
-                badgeClass += ' success';
-                icon = '🤖';
-            } else if (category === 'input') {
-                badgeClass += ' pending';
-                icon = '📝';
-            }
-            
-            let html = `
-                <div class="system-card-header">
-                    <span>${icon}</span>
-                    <span>${message}</span>
-                    <span class="${badgeClass}">${details.path || category}</span>
-                </div>
-            `;
-            
-            if (category === 'routing') {
-                html += `
-                    <div class="system-detail">
-                        <strong>Intent:</strong> ${details.intent || 'unknown'}
-                    </div>
-                    <div class="system-detail">
-                        <strong>Path:</strong> ${details.path === 'mcp' ? 'MCP Fast Path' : 'A2A Agents'}
-                    </div>
-                    ${details.routing_mode && details.routing_mode !== 'auto' ? `<div class="system-detail"><strong>Forced Mode:</strong> ${details.routing_mode.toUpperCase()}</div>` : ''}
-                    ${details.confidence ? `<div class="system-detail"><strong>Confidence:</strong> ${(details.confidence * 100).toFixed(0)}%</div>` : ''}
-                    ${details.latency ? `<div class="system-detail"><strong>Latency:</strong> ${details.latency}ms</div>` : ''}
-                `;
-            } else if (category === 'agents') {
-                html += `
-                    <div class="system-detail">
-                        <strong>Agents Called:</strong>
-                    </div>
-                    <div class="agent-list">
-                        ${details.agents.map(a => `<div class="agent-chip">${a}</div>`).join('')}
-                    </div>
-                    <div class="metrics">
-                        <div class="metric">
-                            <div class="metric-value">${details.count || 0}</div>
-                            <div class="metric-label">Agents</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">${details.duration || 0}ms</div>
-                            <div class="metric-label">Duration</div>
-                        </div>
-                    </div>
-                `;
-            } else if (category === 'input') {
-                html += `
-                    <div class="system-detail">"${details.query}"</div>
-                    <div class="system-detail"><strong>Length:</strong> ${details.length} characters</div>
-                    ${details.routing_mode ? `<div class="system-detail"><strong>Selected Mode:</strong> ${details.routing_mode.toUpperCase()}</div>` : ''}
-                `;
-            }
-            
-            card.innerHTML = html;
-            systemLog.insertBefore(card, systemLog.firstChild);
-            
-            // Keep only last 10 items
-            while (systemLog.children.length > 10) {
-                systemLog.removeChild(systemLog.lastChild);
-            }
-        }
-        
-        function showTypingIndicator() {
-            document.getElementById('typingIndicator').classList.add('active');
-            const messagesDiv = document.getElementById('messages');
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-        
-        function hideTypingIndicator() {
-            document.getElementById('typingIndicator').classList.remove('active');
-        }
-        
         function handleKeyPress(event) {
             if (event.key === 'Enter') {
                 sendMessage();
             }
         }
-        
-        // Connect on load
-        connect();
-        
-        // Start snow animation
-        createSnowflakes();
+
+        function addMessage(role, content) {
+            const container = document.getElementById('messagesContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+
+            messageDiv.appendChild(contentDiv);
+            container.appendChild(messageDiv);
+
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addSystemMessage(content) {
+            addMessage('system', content);
+        }
+
+        function updateInternals(metadata) {
+            const internalsContent = document.getElementById('internalsContent');
+            
+            if (metadata.path === 'processing') {
+                internalsContent.innerHTML = `
+                    <div class="info-block">
+                        <div class="info-label">Status</div>
+                        <div class="info-value">⏳ Processing query...</div>
+                    </div>
+                `;
+                return;
+            }
+
+            const unified = metadata.unified_decision || {};
+            const path = metadata.path || unified.path || 'unknown';
+            const intent = unified.intent || 'unknown';
+            const confidence = unified.confidence || 0;
+            const latency = metadata.latency_ms || 0;
+            const reasoning = unified.reasoning || 'No reasoning provided';
+            const agents = metadata.agents_called || [];
+            const manualOverride = unified.manual_override || false;
+            const forceProtocol = unified.force_protocol || 'auto';
+            const fallbackReason = metadata.fallback_reason || metadata.mcp_error || null;
+
+            let badgeClass = 'mcp';
+            let badgeText = 'MCP';
+            if (path === 'a2a_fallback') {
+                badgeClass = 'fallback';
+                badgeText = 'A2A FALLBACK';
+            } else if (path === 'a2a') {
+                badgeClass = 'a2a';
+                badgeText = 'A2A';
+            } else if (path === 'shortcut') {
+                badgeClass = 'shortcut';
+                badgeText = 'SHORTCUT';
+            }
+
+            const latencyPercent = Math.min((latency / 3000) * 100, 100);
+
+            internalsContent.innerHTML = `
+                <div class="info-block">
+                    <div class="info-label">Routing Path</div>
+                    <div class="info-value">
+                        <span class="badge ${badgeClass}">${badgeText}</span>
+                        ${manualOverride ? '<span class="badge override">🔧 MANUAL OVERRIDE</span>' : ''}
+                    </div>
+                </div>
+
+                ${(manualOverride && forceProtocol === 'mcp' && (path === 'a2a' || path === 'a2a_fallback')) ? `
+                <div class="info-block">
+                    <div class="info-label">Forced MCP Result</div>
+                    <div class="info-value" style="color: #ffa07a;">
+                        MCP was not used for execution; request ran via ${path.toUpperCase()}.
+                        ${fallbackReason ? `<br>${fallbackReason}` : ''}
+                    </div>
+                </div>
+                ` : ''}
+
+                ${manualOverride ? `
+                <div class="info-block">
+                    <div class="info-label">Override Mode</div>
+                    <div class="info-value" style="color: #ffd93d;">
+                        User selected: ${forceProtocol.toUpperCase()}
+                    </div>
+                </div>
+                ` : ''}
+
+                <div class="info-block">
+                    <div class="info-label">Intent Classification</div>
+                    <div class="info-value">${intent} (${(confidence * 100).toFixed(0)}%)</div>
+                </div>
+
+                <div class="info-block">
+                    <div class="info-label">Response Time</div>
+                    <div class="info-value">${latency}ms</div>
+                    <div class="latency-bar">
+                        <div class="latency-fill" style="width: ${latencyPercent}%"></div>
+                    </div>
+                </div>
+
+                <div class="info-block">
+                    <div class="info-label">Routing Logic</div>
+                    <div class="info-value" style="font-size: 12px; line-height: 1.6;">${reasoning}</div>
+                </div>
+
+                ${agents.length > 0 ? `
+                <div class="info-block">
+                    <div class="info-label">Agents Called (${agents.length})</div>
+                    <ul class="agent-list">
+                        ${agents.map(agent => `<li class="agent-item">→ ${agent}</li>`).join('')}
+                    </ul>
+                </div>
+                ` : ''}
+            `;
+        }
+
+        // Initialize
+        connectWebSocket();
     </script>
 </body>
 </html>
@@ -908,9 +1032,9 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_json()
             message = data.get('message', '')
             conversation_id = data.get('conversation_id')
-            routing_mode = data.get('routing_mode', 'auto')
+            force_protocol = data.get('force_protocol', 'auto')  # NEW: Get protocol override
             
-            # Call Exchange Agent
+            # Call Exchange Agent with protocol override
             async with httpx.AsyncClient() as client:
                 try:
                     response = await client.post(
@@ -918,69 +1042,33 @@ async def websocket_endpoint(websocket: WebSocket):
                         json={
                             'query': message,
                             'conversation_id': conversation_id,
-                            'routing_mode': routing_mode
+                            'force_protocol': force_protocol  # NEW: Pass to backend
                         },
                         timeout=30.0
                     )
                     response.raise_for_status()
                     result = response.json()
-                    
-                    # Send routing info to system panel
+
+                    confidence_value = result.get('confidence', 0.0)
+                    logger.info(f"Query: '{message}' | Confidence: {confidence_value} | Intent: {result.get('intent')} | Path: {result.get('path')} | Override: {force_protocol}")
+
+                    # Send response back to client
                     await manager.send_message({
-                        'type': 'system',
-                        'category': 'routing',
-                        'message': 'Routing Decision',
-                        'details': {
-                            'intent': result.get('intent', 'unknown'),
-                            'confidence': result.get('confidence', 0.0),
-                            'path': result.get('path', 'unknown'),
-                            'latency': result.get('latency_ms', 0),
-                            'routing_mode': (
-                                result.get('metadata', {})
-                                .get('unified_decision', {})
-                                .get('routing_mode', routing_mode)
-                            )
+                        'type': 'response',
+                        'response': result['response'],
+                        'conversation_id': conversation_id,
+                        'metadata': {
+                            **result.get('metadata', {}),
+                            'path': result.get('path'),
+                            'latency_ms': result.get('latency_ms')
                         }
                     }, websocket)
                     
-                    # If using A2A path, show agent info
-                    if result.get('path') == 'a2a':
-                        import asyncio
-                        await asyncio.sleep(0.3)
-                        
-                        metadata = result.get('metadata', {})
-                        agents_called = metadata.get('agents_called', [])
-                        
-                        if agents_called:
-                            await manager.send_message({
-                                'type': 'system',
-                                'category': 'agents',
-                                'message': 'Multi-Agent Execution',
-                                'details': {
-                                    'agents': agents_called,
-                                    'count': len(agents_called),
-                                    'duration': result.get('latency_ms', 0)
-                                }
-                            }, websocket)
-                    
-                    # Send response back to client
-                    response_text = result.get('response')
-                    if not isinstance(response_text, str) or not response_text.strip():
-                        logger.error(f"Exchange response missing 'response'. Keys: {list(result.keys())}")
-                        response_text = "I couldn't generate a response for that query. Please try again."
-
-                    await manager.send_message({
-                        'type': 'response',
-                        'content': response_text,
-                        'conversation_id': conversation_id,
-                        'metadata': result.get('metadata', {})
-                    }, websocket)
-                    
                 except httpx.HTTPError as e:
-                    logger.error(f"Error calling exchange agent at {EXCHANGE_AGENT_URL}: {e}")
+                    logger.error(f"Error calling exchange agent: {e}")
                     await manager.send_message({
                         'type': 'error',
-                        'error': 'Failed to process message. Please try again.'
+                        'message': 'Failed to process message. Please try again.'
                     }, websocket)
                     
     except WebSocketDisconnect:
