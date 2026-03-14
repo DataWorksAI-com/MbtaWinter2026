@@ -8,6 +8,8 @@ requests>=2.31.0
 
 # AI / LLM
 openai>=1.6.0
+anthropic>=0.25.0
+anthropic>=0.84.0
 langgraph>=0.2.0
 langchain>=1.2.10
 langchain-openai>=1.1.9
