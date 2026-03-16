@@ -1,14 +1,11 @@
-# src/frontend/chat_server.py
-
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict
-import httpx
+import os
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -25,7 +22,7 @@ app.add_middleware(
 )
 
 # Configuration
-EXCHANGE_AGENT_URL = "http://localhost:8100"
+EXCHANGE_AGENT_URL = os.getenv("EXCHANGE_AGENT_URL", "http://localhost:8100")
 
 # Mount static files for images
 static_dir = Path(__file__).parent / "static"
@@ -125,9 +122,11 @@ async def get_ui():
 
         /* Left Panel - Chat */
         .chat-panel {
-            display: flex;
-            flex-direction: column;
+            display: grid;
+            grid-template-rows: auto 1fr auto auto;
+            height: 100%;
             border-right: 1px solid #e0e0e0;
+            min-height: 0;
         }
 
         .chat-header {
@@ -139,6 +138,7 @@ async def get_ui():
             display: flex;
             align-items: center;
             justify-content: space-between;
+            flex-shrink: 0;
         }
 
         .header-left {
@@ -179,10 +179,11 @@ async def get_ui():
         }
 
         .messages-container {
-            flex: 1;
             overflow-y: auto;
+            overflow-x: hidden;
             padding: 20px 30px;
             background: #f8f9fa;
+            min-height: 0;
         }
 
         .message {
@@ -248,6 +249,7 @@ async def get_ui():
             align-items: center;
             gap: 10px;
             backdrop-filter: blur(10px);
+            flex-shrink: 0;
         }
 
         .protocol-label {
@@ -300,6 +302,7 @@ async def get_ui():
             padding: 20px 30px;
             background: white;
             border-top: 1px solid #e0e0e0;
+            flex-shrink: 0;
         }
 
         .input-container {
@@ -352,14 +355,17 @@ async def get_ui():
         .internals-panel {
             background: #1a1a2e;
             color: #eee;
-            display: flex;
-            flex-direction: column;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            height: 100%;
+            min-height: 0;
         }
 
         .internals-header {
             padding: 20px;
             background: #16213e;
             border-bottom: 1px solid #2a2a4e;
+            flex-shrink: 0;
         }
 
         .internals-title {
@@ -398,9 +404,10 @@ async def get_ui():
         }
 
         .internals-content {
-            flex: 1;
             overflow-y: auto;
+            overflow-x: hidden;
             padding: 20px;
+            min-height: 0;
         }
 
         .info-block {
@@ -683,10 +690,6 @@ async def get_ui():
         let currentProtocol = 'auto';
         let currentWeather = null;
 
-        // ============================================================
-        // WEATHER EFFECTS SYSTEM
-        // ============================================================
-
         const canvas = document.getElementById('weatherCanvas');
         const ctx = canvas.getContext('2d');
 
@@ -731,32 +734,20 @@ async def get_ui():
                 if (this.type === 'snow') {
                     this.y += this.speed;
                     this.x += this.wind;
-
-                    if (this.y > canvas.height) {
-                        this.y = -10;
-                        this.x = Math.random() * canvas.width;
-                    }
+                    if (this.y > canvas.height) { this.y = -10; this.x = Math.random() * canvas.width; }
                 } else if (this.type === 'rain') {
                     this.y += this.speed;
                     this.x += this.wind;
-
-                    if (this.y > canvas.height) {
-                        this.y = -this.length;
-                        this.x = Math.random() * canvas.width;
-                    }
+                    if (this.y > canvas.height) { this.y = -this.length; this.x = Math.random() * canvas.width; }
                 } else if (this.type === 'cloud') {
                     this.x += this.speed;
-
-                    if (this.x > canvas.width + this.radius) {
-                        this.x = -this.radius;
-                    }
+                    if (this.x > canvas.width + this.radius) { this.x = -this.radius; }
                 }
             }
 
             draw() {
                 ctx.save();
                 ctx.globalAlpha = this.opacity;
-
                 if (this.type === 'snow') {
                     ctx.fillStyle = 'white';
                     ctx.beginPath();
@@ -777,270 +768,143 @@ async def get_ui():
                     ctx.arc(this.x + this.radius, this.y, this.radius * 0.8, 0, Math.PI * 2);
                     ctx.fill();
                 }
-
                 ctx.restore();
             }
         }
 
         function setWeatherEffect(weatherCondition) {
             particles = [];
-            
             const weatherMap = {
-                'Clear': 'clear',
-                'ClearNight': 'clear',
-                'Clouds': 'cloudy',
-                'Rain': 'rain',
-                'Drizzle': 'rain',
-                'Thunderstorm': 'rain',
-                'Snow': 'snow',
-                'Mist': 'cloudy',
-                'Fog': 'cloudy',
-                'Haze': 'cloudy'
+                'Clear': 'clear', 'ClearNight': 'clear', 'Clouds': 'cloudy',
+                'Rain': 'rain', 'Drizzle': 'rain', 'Thunderstorm': 'rain',
+                'Snow': 'snow', 'Mist': 'cloudy', 'Fog': 'cloudy', 'Haze': 'cloudy'
             };
-
             const effect = weatherMap[weatherCondition] || 'clear';
-
-            if (effect === 'snow') {
-                for (let i = 0; i < 150; i++) {
-                    particles.push(new Particle('snow'));
-                }
-            } else if (effect === 'rain') {
-                for (let i = 0; i < 200; i++) {
-                    particles.push(new Particle('rain'));
-                }
-            } else if (effect === 'cloudy') {
-                for (let i = 0; i < 5; i++) {
-                    particles.push(new Particle('cloud'));
-                }
-            }
-            // Clear and ClearNight have no particles
+            if (effect === 'snow') { for (let i = 0; i < 150; i++) particles.push(new Particle('snow')); }
+            else if (effect === 'rain') { for (let i = 0; i < 200; i++) particles.push(new Particle('rain')); }
+            else if (effect === 'cloudy') { for (let i = 0; i < 5; i++) particles.push(new Particle('cloud')); }
         }
 
         function animateWeather() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            particles.forEach(particle => {
-                particle.update();
-                particle.draw();
-            });
-
+            particles.forEach(p => { p.update(); p.draw(); });
             requestAnimationFrame(animateWeather);
         }
-
         animateWeather();
-
-        // ============================================================
-        // FETCH REAL WEATHER
-        // ============================================================
 
         async function fetchWeather() {
             try {
-                const response = await fetch(`https://wttr.in/Boston?format=j1`);
+                const response = await fetch('https://wttr.in/Boston?format=j1');
                 const data = await response.json();
-                
                 const current = data.current_condition[0];
                 const weatherDesc = current.weatherDesc[0].value;
                 const temp = current.temp_F;
                 const feelsLike = current.FeelsLikeF;
-                
-                // Get astronomy data for day/night detection
                 const astronomy = data.weather[0].astronomy[0];
                 const sunrise = astronomy.sunrise;
                 const sunset = astronomy.sunset;
-                
-                // Check if it's nighttime
                 const isNight = isCurrentlyNight(sunrise, sunset);
-                
                 let condition = 'Clear';
-                if (weatherDesc.toLowerCase().includes('snow')) {
-                    condition = 'Snow';
-                } else if (weatherDesc.toLowerCase().includes('rain')) {
-                    condition = 'Rain';
-                } else if (weatherDesc.toLowerCase().includes('cloud')) {
-                    condition = 'Clouds';
-                } else if (weatherDesc.toLowerCase().includes('clear') || weatherDesc.toLowerCase().includes('sunny')) {
+                if (weatherDesc.toLowerCase().includes('snow')) condition = 'Snow';
+                else if (weatherDesc.toLowerCase().includes('rain')) condition = 'Rain';
+                else if (weatherDesc.toLowerCase().includes('cloud')) condition = 'Clouds';
+                else if (weatherDesc.toLowerCase().includes('clear') || weatherDesc.toLowerCase().includes('sunny'))
                     condition = isNight ? 'ClearNight' : 'Clear';
-                }
-                
-                currentWeather = {
-                    condition: condition,
-                    description: weatherDesc,
-                    temp: temp,
-                    feelsLike: feelsLike,
-                    location: 'Boston, MA',
-                    isNight: isNight,
-                    sunrise: sunrise,
-                    sunset: sunset
-                };
-                
+                currentWeather = { condition, description: weatherDesc, temp, feelsLike, location: 'Boston, MA', isNight, sunrise, sunset };
                 updateWeatherDisplay();
                 setWeatherEffect(condition);
-                
             } catch (error) {
                 console.error('Weather fetch failed:', error);
-                currentWeather = {
-                    condition: 'Clear',
-                    description: 'Unable to fetch weather',
-                    temp: '--',
-                    feelsLike: '--',
-                    location: 'Boston, MA',
-                    isNight: false
-                };
+                currentWeather = { condition: 'Clear', description: 'Unable to fetch weather', temp: '--', feelsLike: '--', location: 'Boston, MA', isNight: false };
                 updateWeatherDisplay();
             }
         }
-        
+
         function isCurrentlyNight(sunrise, sunset) {
-            /**
-             * Check if current time is nighttime
-             * sunrise/sunset format: "07:15 AM" or "06:45 PM"
-             */
             try {
                 const now = new Date();
                 const currentMinutes = now.getHours() * 60 + now.getMinutes();
-                
-                // Parse sunrise
-                const sunriseMatch = sunrise.match(/(\d+):(\d+)\s*(AM|PM)/i);
-                let sunriseMinutes = 0;
-                if (sunriseMatch) {
-                    let hours = parseInt(sunriseMatch[1]);
-                    const minutes = parseInt(sunriseMatch[2]);
-                    const period = sunriseMatch[3].toUpperCase();
-                    
+                const parseTime = (timeStr) => {
+                    const match = timeStr.match(/(\\d+):(\\d+)\\s*(AM|PM)/i);
+                    if (!match) return 0;
+                    let hours = parseInt(match[1]);
+                    const minutes = parseInt(match[2]);
+                    const period = match[3].toUpperCase();
                     if (period === 'PM' && hours !== 12) hours += 12;
                     if (period === 'AM' && hours === 12) hours = 0;
-                    
-                    sunriseMinutes = hours * 60 + minutes;
-                }
-                
-                // Parse sunset
-                const sunsetMatch = sunset.match(/(\d+):(\d+)\s*(AM|PM)/i);
-                let sunsetMinutes = 0;
-                if (sunsetMatch) {
-                    let hours = parseInt(sunsetMatch[1]);
-                    const minutes = parseInt(sunsetMatch[2]);
-                    const period = sunsetMatch[3].toUpperCase();
-                    
-                    if (period === 'PM' && hours !== 12) hours += 12;
-                    if (period === 'AM' && hours === 12) hours = 0;
-                    
-                    sunsetMinutes = hours * 60 + minutes;
-                }
-                
-                // Check if current time is before sunrise or after sunset
+                    return hours * 60 + minutes;
+                };
+                const sunriseMinutes = parseTime(sunrise);
+                const sunsetMinutes = parseTime(sunset);
                 const isNight = currentMinutes < sunriseMinutes || currentMinutes >= sunsetMinutes;
-                
                 console.log(`Time check: ${now.getHours()}:${now.getMinutes()} | Sunrise: ${sunrise} (${sunriseMinutes}min) | Sunset: ${sunset} (${sunsetMinutes}min) | Night: ${isNight}`);
-                
                 return isNight;
-                
             } catch (error) {
                 console.error('Day/night detection failed:', error);
-                return false; // Default to daytime
+                return false;
             }
         }
 
         function updateWeatherDisplay() {
             if (!currentWeather) return;
-
             const iconMap = {
-                'Clear': '☀️',
-                'ClearNight': '🌙',
-                'Clouds': '☁️',
-                'Rain': '🌧️',
-                'Drizzle': '🌦️',
-                'Thunderstorm': '⛈️',
-                'Snow': '❄️',
-                'Mist': '🌫️',
-                'Fog': '🌫️',
-                'Haze': '🌫️'
+                'Clear': '☀️', 'ClearNight': '🌙', 'Clouds': '☁️', 'Rain': '🌧️',
+                'Drizzle': '🌦️', 'Thunderstorm': '⛈️', 'Snow': '❄️', 'Mist': '🌫️', 'Fog': '🌫️', 'Haze': '🌫️'
             };
-
             const icon = iconMap[currentWeather.condition] || '☁️';
             document.getElementById('weatherIcon').textContent = icon;
-
-            // Add sunrise/sunset info if available
             let timeInfo = '';
             if (currentWeather.sunrise && currentWeather.sunset) {
-                if (currentWeather.isNight) {
-                    timeInfo = ` • 🌙 Night (sunrise at ${currentWeather.sunrise})`;
-                } else {
-                    timeInfo = ` • ☀️ Day (sunset at ${currentWeather.sunset})`;
-                }
+                timeInfo = currentWeather.isNight
+                    ? ` • 🌙 Night (sunrise at ${currentWeather.sunrise})`
+                    : ` • ☀️ Day (sunset at ${currentWeather.sunset})`;
             }
-
-            const weatherInfo = document.getElementById('weatherInfo');
-            weatherInfo.innerHTML = `
+            document.getElementById('weatherInfo').innerHTML = `
                 <div class="weather-info-title">${icon} ${currentWeather.description}</div>
-                <div class="weather-info-detail">
-                    ${currentWeather.location} • ${currentWeather.temp}°F (feels like ${currentWeather.feelsLike}°F)${timeInfo}
-                </div>
+                <div class="weather-info-detail">${currentWeather.location} • ${currentWeather.temp}°F (feels like ${currentWeather.feelsLike}°F)${timeInfo}</div>
             `;
         }
 
         fetchWeather();
-        setInterval(fetchWeather, 600000); // 10 minutes
-
-        // ============================================================
-        // PROTOCOL SELECTION
-        // ============================================================
+        setInterval(fetchWeather, 600000);
 
         function selectProtocol(protocol) {
             currentProtocol = protocol;
-            
-            document.querySelectorAll('.protocol-button').forEach(btn => {
-                btn.classList.remove('active');
-            });
+            document.querySelectorAll('.protocol-button').forEach(btn => btn.classList.remove('active'));
             document.querySelector(`[data-protocol="${protocol}"]`).classList.add('active');
-            
-            const mode = protocol === 'auto' ? 'Intelligent Auto-Routing' : 
-                        protocol === 'mcp' ? 'MCP Fast Path (forced)' : 
-                        'A2A Multi-Agent (forced)';
-            
+            const mode = protocol === 'auto' ? 'Intelligent Auto-Routing' : protocol === 'mcp' ? 'MCP Fast Path (forced)' : 'A2A Multi-Agent (forced)';
             addSystemMessage(`Routing mode: ${mode}`);
         }
-
-        // ============================================================
-        // WEBSOCKET CONNECTION
-        // ============================================================
 
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.hostname}:${window.location.port}/ws`;
-            
             ws = new WebSocket(wsUrl);
-
             ws.onopen = () => {
                 console.log('WebSocket connected');
                 document.getElementById('statusDot').classList.add('connected');
                 document.getElementById('statusText').textContent = 'Connected';
             };
-
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 console.log('Received:', data);
-
                 if (data.type === 'response') {
                     addMessage('assistant', data.response);
                     updateInternals(data.metadata);
                 } else if (data.type === 'error') {
                     addMessage('system', `Error: ${data.message}`);
                 }
-
                 document.getElementById('sendButton').disabled = false;
             };
-
             ws.onerror = (error) => {
                 console.error('WebSocket error:', error);
                 document.getElementById('statusDot').classList.remove('connected');
                 document.getElementById('statusText').textContent = 'Error';
             };
-
             ws.onclose = () => {
                 console.log('WebSocket disconnected');
                 document.getElementById('statusDot').classList.remove('connected');
                 document.getElementById('statusText').textContent = 'Disconnected';
-                
                 setTimeout(connectWebSocket, 3000);
             };
         }
@@ -1048,46 +912,27 @@ async def get_ui():
         function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
-
-            if (!message || !ws || ws.readyState !== WebSocket.OPEN) {
-                return;
-            }
-
+            if (!message || !ws || ws.readyState !== WebSocket.OPEN) return;
             addMessage('user', message);
-
-            ws.send(JSON.stringify({
-                message: message,
-                force_protocol: currentProtocol
-            }));
-
+            ws.send(JSON.stringify({ message: message, force_protocol: currentProtocol }));
             input.value = '';
             document.getElementById('sendButton').disabled = true;
-
-            updateInternals({
-                path: 'processing',
-                intent: 'analyzing...',
-                confidence: 0
-            });
+            updateInternals({ path: 'processing', intent: 'analyzing...', confidence: 0 });
         }
 
         function handleKeyPress(event) {
-            if (event.key === 'Enter') {
-                sendMessage();
-            }
+            if (event.key === 'Enter') sendMessage();
         }
 
         function addMessage(role, content) {
             const container = document.getElementById('messagesContainer');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
-
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             contentDiv.textContent = content;
-
             messageDiv.appendChild(contentDiv);
             container.appendChild(messageDiv);
-
             container.scrollTop = container.scrollHeight;
         }
 
@@ -1097,17 +942,10 @@ async def get_ui():
 
         function updateInternals(metadata) {
             const internalsContent = document.getElementById('internalsContent');
-            
             if (metadata.path === 'processing') {
-                internalsContent.innerHTML = `
-                    <div class="info-block">
-                        <div class="info-label">Status</div>
-                        <div class="info-value">⏳ Processing query...</div>
-                    </div>
-                `;
+                internalsContent.innerHTML = `<div class="info-block"><div class="info-label">Status</div><div class="info-value">⏳ Processing query...</div></div>`;
                 return;
             }
-
             const unified = metadata.unified_decision || {};
             const path = metadata.path || unified.path || 'unknown';
             const intent = unified.intent || 'unknown';
@@ -1117,19 +955,10 @@ async def get_ui():
             const agents = metadata.agents_called || [];
             const manualOverride = unified.manual_override || false;
             const forceProtocol = unified.force_protocol || 'auto';
-
-            let badgeClass = 'mcp';
-            let badgeText = 'MCP';
-            if (path === 'a2a' || path === 'a2a_fallback') {
-                badgeClass = 'a2a';
-                badgeText = 'A2A';
-            } else if (path === 'shortcut') {
-                badgeClass = 'shortcut';
-                badgeText = 'SHORTCUT';
-            }
-
+            let badgeClass = 'mcp', badgeText = 'MCP';
+            if (path === 'a2a' || path === 'a2a_fallback') { badgeClass = 'a2a'; badgeText = 'A2A'; }
+            else if (path === 'shortcut') { badgeClass = 'shortcut'; badgeText = 'SHORTCUT'; }
             const latencyPercent = Math.min((latency / 3000) * 100, 100);
-
             internalsContent.innerHTML = `
                 <div class="info-block">
                     <div class="info-label">Routing Path</div>
@@ -1138,46 +967,24 @@ async def get_ui():
                         ${manualOverride ? '<span class="badge override">🔧 MANUAL OVERRIDE</span>' : ''}
                     </div>
                 </div>
-
-                ${manualOverride ? `
-                <div class="info-block">
-                    <div class="info-label">Override Mode</div>
-                    <div class="info-value" style="color: #ffd93d;">
-                        User selected: ${forceProtocol.toUpperCase()}
-                    </div>
-                </div>
-                ` : ''}
-
+                ${manualOverride ? `<div class="info-block"><div class="info-label">Override Mode</div><div class="info-value" style="color: #ffd93d;">User selected: ${forceProtocol.toUpperCase()}</div></div>` : ''}
                 <div class="info-block">
                     <div class="info-label">Intent Classification</div>
                     <div class="info-value">${intent} (${(confidence * 100).toFixed(0)}%)</div>
                 </div>
-
                 <div class="info-block">
                     <div class="info-label">Response Time</div>
                     <div class="info-value">${latency}ms</div>
-                    <div class="latency-bar">
-                        <div class="latency-fill" style="width: ${latencyPercent}%"></div>
-                    </div>
+                    <div class="latency-bar"><div class="latency-fill" style="width: ${latencyPercent}%"></div></div>
                 </div>
-
                 <div class="info-block">
                     <div class="info-label">Routing Logic</div>
                     <div class="info-value" style="font-size: 12px; line-height: 1.6;">${reasoning}</div>
                 </div>
-
-                ${agents.length > 0 ? `
-                <div class="info-block">
-                    <div class="info-label">Agents Called (${agents.length})</div>
-                    <ul class="agent-list">
-                        ${agents.map(agent => `<li class="agent-item">→ ${agent}</li>`).join('')}
-                    </ul>
-                </div>
-                ` : ''}
+                ${agents.length > 0 ? `<div class="info-block"><div class="info-label">Agents Called (${agents.length})</div><ul class="agent-list">${agents.map(agent => `<li class="agent-item">→ ${agent}</li>`).join('')}</ul></div>` : ''}
             `;
         }
 
-        // Initialize
         connectWebSocket();
     </script>
 </body>
@@ -1185,60 +992,69 @@ async def get_ui():
     """
     return HTMLResponse(content=html_content)
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    
+
     try:
         while True:
-            # Receive message from client
             data = await websocket.receive_json()
             message = data.get('message', '')
             conversation_id = data.get('conversation_id')
-            force_protocol = data.get('force_protocol', 'auto')  # NEW: Get protocol override
-            
-            # Call Exchange Agent with protocol override
-            async with httpx.AsyncClient() as client:
-                try:
-                    response = await client.post(
-                        f"{EXCHANGE_AGENT_URL}/chat",
-                        json={
-                            'query': message,
-                            'conversation_id': conversation_id,
-                            'force_protocol': force_protocol  # NEW: Pass to backend
-                        },
-                        timeout=30.0
-                    )
-                    response.raise_for_status()
-                    result = response.json()
+            force_protocol = data.get('force_protocol', 'auto')
 
-                    confidence_value = result.get('confidence', 0.0)
-                    logger.info(f"Query: '{message}' | Confidence: {confidence_value} | Intent: {result.get('intent')} | Path: {result.get('path')} | Override: {force_protocol}")
+            # Call Exchange Agent using urllib (avoids anyio/httpx incompatibility)
+            try:
+                import urllib.request, json as _json, asyncio
+                _data = _json.dumps({
+                    'query': message,
+                    'conversation_id': conversation_id,
+                    'force_protocol': force_protocol
+                }).encode()
+                _req = urllib.request.Request(
+                    "http://10.128.113.34:8100/chat",
+                    data=_data,
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+                _resp_bytes = await asyncio.to_thread(
+                    lambda: urllib.request.urlopen(_req, timeout=30).read()
+                )
+                result = _json.loads(_resp_bytes)
 
-                    # Send response back to client
-                    await manager.send_message({
-                        'type': 'response',
-                        'response': result['response'],
-                        'conversation_id': conversation_id,
-                        'metadata': result.get('metadata', {})
-                    }, websocket)
-                    
-                except httpx.HTTPError as e:
-                    logger.error(f"Error calling exchange agent: {e}")
-                    await manager.send_message({
-                        'type': 'error',
-                        'message': 'Failed to process message. Please try again.'
-                    }, websocket)
-                    
+                confidence_value = result.get('confidence', 0.0)
+                logger.info(f"Query: '{message}' | Confidence: {confidence_value} | Intent: {result.get('intent')} | Path: {result.get('path')} | Override: {force_protocol}")
+
+                await manager.send_message({
+                    'type': 'response',
+                    'response': result['response'],
+                    'conversation_id': conversation_id,
+                    'metadata': {
+                        **result.get('metadata', {}),
+                        'path': result.get('path'),
+                        'latency_ms': result.get('latency_ms')
+                    }
+                }, websocket)
+
+            except Exception as e:
+                logger.error(f"Error calling exchange agent: {type(e).__name__}: {e}")
+                await manager.send_message({
+                    'type': 'error',
+                    'message': 'Failed to process message. Please try again.'
+                }, websocket)
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
+
 @app.get("/health")
 async def health():
     return {"status": "healthy", "service": "frontend"}
+
 
 if __name__ == "__main__":
     import uvicorn
