@@ -32,7 +32,7 @@ tracer = trace.get_tracer(__name__)
 logger = logging.getLogger(__name__)
 
 # Configuration
-REGISTRY_URL = os.getenv("REGISTRY_URL", "http://97.107.132.213:6900")
+REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:6900")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # Caching
