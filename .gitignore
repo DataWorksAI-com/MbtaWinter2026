@@ -2,6 +2,9 @@
 *.enc.*.yaml
 secrets.yaml
 
+# Personal branch notes / blog drafts
+engineering_blog_entry_*.txt
+
 # Created by https://www.toptal.com/developers/gitignore/api/python,macos,windows,terraform
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,macos,windows,terraform
 

@@ -512,6 +512,14 @@ MbtaWinter2026/
 | `MBTA_API_KEY` | All agents | MBTA v3 API key |
 | `USE_SLIM` | Exchange | Enable SLIM transport (`true`/`false`) |
 | `REGISTRY_URL` | Exchange | NANDA registry endpoint |
+| `ENABLE_FEDERATION` | Registry | Enable switchboard-style federated lookups across registries |
+| `AGNTCY_ADS_URL` | Registry | AGNTCY ADS base URL used by the federation adapter |
+| `AGNTCY_ADS_SEARCH_PATH` | Registry | AGNTCY search path (default: `/v1/search`) |
+| `AGNTCY_ADS_TOKEN` | Registry (secret) | Optional bearer token for AGNTCY ADS |
+| `NEU_REGISTRY_URL` | Registry | Northeastern registry base URL used by the federation adapter |
+| `ENABLE_EXTERNAL_REGISTRATION` | Register job | Mirror MBTA agent registrations to external registries |
+| `NEU_REGISTRY_REGISTER_URL` | Register job | External NEU register endpoint for mirroring |
+| `AGNTCY_REGISTER_WEBHOOK_URL` | Register job | External AGNTCY registration webhook for mirroring |
 | `EXCHANGE_AGENT_URL` | Frontend | Exchange server endpoint |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | All | OpenTelemetry collector |
 | `CLICKHOUSE_HOST` | Exchange | ClickHouse analytics host |
@@ -544,6 +552,67 @@ MbtaWinter2026/
 | `GET` | `/health` | Health check |
 | `GET` | `/list` | List registered agents |
 | `POST` | `/register` | Register an agent |
+| `GET` | `/switchboard/registries` | Show local and federated registry connectivity |
+| `GET` | `/switchboard/lookup/@neu:<agent>` | Federated lookup through Northeastern adapter |
+| `GET` | `/switchboard/lookup/@agntcy:<agent>` | Federated lookup through AGNTCY adapter |
+| `GET` | `/switchboard/diagnostics?agent=mbta-alerts` | Federation diagnostics with upstream state classification |
+
+## Federation Setup And Verification
+
+1. Enable federation in [k8s/configmap.yaml](k8s/configmap.yaml) by setting:
+  - `ENABLE_FEDERATION: "true"`
+  - `AGNTCY_ADS_URL` to your AGNTCY ADS endpoint
+  - `NEU_REGISTRY_URL` to your Northeastern registry endpoint
+2. If AGNTCY requires auth, add `AGNTCY_ADS_TOKEN` in [k8s/secrets.yaml](k8s/secrets.yaml).
+3. Apply updated manifests:
+
+```bash
+bash deploy.sh apply
+```
+
+4. Verify connected registries:
+
+```bash
+kubectl -n mbta port-forward svc/registry 6900:6900
+curl http://localhost:6900/switchboard/registries
+```
+
+5. Verify cross-registry lookup via switchboard-style IDs:
+
+```bash
+curl "http://localhost:6900/switchboard/lookup/@neu:mbta-alerts"
+curl "http://localhost:6900/switchboard/lookup/@agntcy:mbta-alerts"
+```
+
+6. Run diagnostics to classify upstream state per registry:
+
+```bash
+curl "http://localhost:6900/switchboard/diagnostics?agent=mbta-alerts"
+```
+
+Diagnostics classify external registries as:
+- `upstream_unavailable`: connectivity or transport failure to upstream
+- `reachable_empty_result`: upstream reachable but sample agent not found
+- `reachable_schema_mismatch`: upstream response shape does not match expected fields
+- `reachable_found`: sample agent resolved successfully
+
+7. Optional: enable mirrored registration by setting in [k8s/configmap.yaml](k8s/configmap.yaml):
+  - `ENABLE_EXTERNAL_REGISTRATION: "true"`
+  - `NEU_REGISTRY_REGISTER_URL`
+  - `AGNTCY_REGISTER_WEBHOOK_URL`
+
+When mirroring is enabled, [k8s/register-agents-job.yaml](k8s/register-agents-job.yaml) will register local MBTA agents and then forward registration payloads to configured external targets.
+
+For CI or quick operator checks, use [scripts/check_switchboard_diagnostics.py](scripts/check_switchboard_diagnostics.py):
+
+```bash
+python scripts/check_switchboard_diagnostics.py \
+  --url http://localhost:6900 \
+  --agent mbta-alerts \
+  --require-federation-enabled \
+  --expect-neu reachable_found \
+  --expect-agntcy reachable_found
+```
 
 ---
 

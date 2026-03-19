@@ -46,6 +46,37 @@ spec:
               value: "mongodb://localhost:27017"
             - name: MONGODB_DB
               value: "nanda_private_registry"
+            - name: ENABLE_FEDERATION
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: ENABLE_FEDERATION
+            - name: SWITCHBOARD_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: SWITCHBOARD_TIMEOUT_SECONDS
+            - name: AGNTCY_ADS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: AGNTCY_ADS_URL
+            - name: AGNTCY_ADS_SEARCH_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: AGNTCY_ADS_SEARCH_PATH
+            - name: NEU_REGISTRY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: NEU_REGISTRY_URL
+            - name: AGNTCY_ADS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mbta-api-secrets
+                  key: AGNTCY_ADS_TOKEN
+                  optional: true
           resources:
             requests:
               cpu: 100m
