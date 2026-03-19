@@ -34,6 +34,18 @@ data:
   # Application
   LOG_LEVEL: "INFO"
 
+  # Registry federation (switchboard mode)
+  ENABLE_FEDERATION: "false"
+  SWITCHBOARD_TIMEOUT_SECONDS: "5"
+  AGNTCY_ADS_URL: ""
+  AGNTCY_ADS_SEARCH_PATH: "/v1/search"
+  NEU_REGISTRY_URL: ""
+
+  # Optional external registration settings
+  ENABLE_EXTERNAL_REGISTRATION: "false"
+  NEU_REGISTRY_REGISTER_URL: ""
+  AGNTCY_REGISTER_WEBHOOK_URL: ""
+
   # LLM Provider config
   LLM_PROVIDER: "anthropic"
   ANTHROPIC_MODEL: "claude-haiku-4-5-20251001"
