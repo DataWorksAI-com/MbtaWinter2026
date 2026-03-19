@@ -603,6 +603,17 @@ Diagnostics classify external registries as:
 
 When mirroring is enabled, [k8s/register-agents-job.yaml](k8s/register-agents-job.yaml) will register local MBTA agents and then forward registration payloads to configured external targets.
 
+For CI or quick operator checks, use [scripts/check_switchboard_diagnostics.py](scripts/check_switchboard_diagnostics.py):
+
+```bash
+python scripts/check_switchboard_diagnostics.py \
+  --url http://localhost:6900 \
+  --agent mbta-alerts \
+  --require-federation-enabled \
+  --expect-neu reachable_found \
+  --expect-agntcy reachable_found
+```
+
 ---
 
 ## Known Issues & Limitations
