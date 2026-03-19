@@ -17,6 +17,22 @@ spec:
       containers:
         - name: register
           image: curlimages/curl:latest
+          env:
+            - name: ENABLE_EXTERNAL_REGISTRATION
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: ENABLE_EXTERNAL_REGISTRATION
+            - name: NEU_REGISTRY_REGISTER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: NEU_REGISTRY_REGISTER_URL
+            - name: AGNTCY_REGISTER_WEBHOOK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mbta-config
+                  key: AGNTCY_REGISTER_WEBHOOK_URL
           command:
             - /bin/sh
             - -c
@@ -87,3 +103,33 @@ spec:
               echo ""
               echo "✅ All agents registered and marked alive!"
               curl -s http://registry:6900/list | head -100
+
+              if [ "$ENABLE_EXTERNAL_REGISTRATION" = "true" ]; then
+                echo ""
+                echo "External registration mirroring enabled"
+
+                if [ -n "$NEU_REGISTRY_REGISTER_URL" ]; then
+                  echo "Mirroring to NEU registry at $NEU_REGISTRY_REGISTER_URL"
+                  for agent in mbta-alerts mbta-planner mbta-stopfinder; do
+                    port="8001"
+                    if [ "$agent" = "mbta-planner" ]; then port="8002"; fi
+                    if [ "$agent" = "mbta-stopfinder" ]; then port="8003"; fi
+                    curl -s -X POST "$NEU_REGISTRY_REGISTER_URL" \
+                      -H "Content-Type: application/json" \
+                      -d "{\"agent_id\":\"$agent\",\"agent_url\":\"http://$agent:$port\"}" >/dev/null || true
+                  done
+                fi
+
+                if [ -n "$AGNTCY_REGISTER_WEBHOOK_URL" ]; then
+                  echo "Mirroring to AGNTCY webhook at $AGNTCY_REGISTER_WEBHOOK_URL"
+                  for agent in mbta-alerts mbta-planner mbta-stopfinder; do
+                    curl -s -X POST "$AGNTCY_REGISTER_WEBHOOK_URL" \
+                      -H "Content-Type: application/json" \
+                      -d "{\"source\":\"mbta-winter-2026\",\"agent_id\":\"$agent\"}" >/dev/null || true
+                  done
+                fi
+              fi
+
+              echo ""
+              echo "Switchboard registry status:"
+              curl -s http://registry:6900/switchboard/registries || true
