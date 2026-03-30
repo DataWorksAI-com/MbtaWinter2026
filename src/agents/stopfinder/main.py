@@ -38,10 +38,17 @@ except Exception as e:
     log.warning(f"Could not instrument FastAPI: {e}")
 
 # MBTA API Configuration
-MBTA_API_KEY = os.getenv('MBTA_API_KEY', 'your api key')
+MBTA_API_KEY = os.getenv('MBTA_API_KEY')
 MBTA_BASE_URL = "https://api-v3.mbta.com"
 
-if not MBTA_API_KEY:
+
+def _is_valid_api_key(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    normalized = value.strip().lower()
+    return normalized not in {"", "your api key", "your_api_key", "changeme", "replace-me"}
+
+if not _is_valid_api_key(MBTA_API_KEY):
     log.warning("MBTA_API_KEY not found in environment variables!")
 
 # Pydantic models
@@ -346,7 +353,7 @@ def health():
         "ok": True,
         "service": "mbta-stopfinder-agent",
         "version": "1.0.0",
-        "mbta_api_configured": MBTA_API_KEY is not None
+        "mbta_api_configured": _is_valid_api_key(MBTA_API_KEY)
     }
 
 
