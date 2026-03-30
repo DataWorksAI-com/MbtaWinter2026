@@ -41,26 +41,34 @@ except Exception as e:
     log.warning(f"Could not instrument FastAPI: {e}")
 
 # MBTA API Configuration
-MBTA_API_KEY = os.getenv('MBTA_API_KEY', 'your api key')
+MBTA_API_KEY = os.getenv('MBTA_API_KEY')
 MBTA_BASE_URL = "https://api-v3.mbta.com"
+INVALID_API_KEY_VALUES = {"", "your api key", "your_api_key", "changeme", "replace-me"}
+APP_STARTUP_COMPLETE = False
+
+
+def _is_valid_api_key(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    return value.strip().lower() not in INVALID_API_KEY_VALUES
 
 # OpenAI Configuration for LLM extraction
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-if not MBTA_API_KEY:
+if not _is_valid_api_key(MBTA_API_KEY):
     log.warning("MBTA_API_KEY not found in environment variables!")
 
 # LLM Client
+llm = None
 try:
     from src.exchange_agent.llm_client import get_llm_client
     llm = get_llm_client()
     log.info(f"✓ LLM provider: {llm.provider}")
 except LLMClientException as e:
-    log.critical(f"Failed to set up LLM provider: {e}")
-    sys.exit(1)
+    log.warning(f"Failed to set up LLM provider, continuing with fallback extraction: {e}")
 except RuntimeError as e:
-    log.warning(f"Runtime error in LLM setup: {e}")
+    log.warning(f"Runtime error in LLM setup, continuing with fallback extraction: {e}")
 
 # Pydantic models
 class A2AMessage(BaseModel):
@@ -397,16 +405,38 @@ def plan_route(origin: str, destination: str) -> Dict[str, Any]:
         }
 
 
-@app.get("/health")
-def health():
-    """Health check endpoint"""
+@app.on_event("startup")
+def mark_startup_complete():
+    global APP_STARTUP_COMPLETE
+    APP_STARTUP_COMPLETE = True
+
+
+@app.get("/live")
+def live():
     return {
         "ok": True,
         "service": "mbta-planner-agent",
         "version": "1.0.0",
-        "mbta_api_configured": MBTA_API_KEY is not None,
-        "llm_extraction_available": openai_client is not None
+        "startup_complete": APP_STARTUP_COMPLETE,
     }
+
+
+@app.get("/health")
+def health():
+    """Readiness endpoint for registration and Kubernetes probes."""
+    ready = APP_STARTUP_COMPLETE and _is_valid_api_key(MBTA_API_KEY)
+    payload = {
+        "ok": True,
+        "ready": ready,
+        "service": "mbta-planner-agent",
+        "version": "1.0.0",
+        "startup_complete": APP_STARTUP_COMPLETE,
+        "mbta_api_configured": _is_valid_api_key(MBTA_API_KEY),
+        "llm_extraction_available": openai_client is not None,
+        "llm_provider_initialized": llm is not None,
+        "llm_fallback_active": llm is None
+    }
+    return JSONResponse(status_code=200 if ready else 503, content=payload)
 
 
 @app.get("/plan")

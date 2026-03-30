@@ -48,7 +48,7 @@ spec:
               memory: 512Mi
           livenessProbe:
             httpGet:
-              path: /health
+              path: /live
               port: 8003
             initialDelaySeconds: 20
             periodSeconds: 10
