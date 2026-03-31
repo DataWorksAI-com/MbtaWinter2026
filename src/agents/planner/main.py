@@ -41,26 +41,33 @@ except Exception as e:
     log.warning(f"Could not instrument FastAPI: {e}")
 
 # MBTA API Configuration
-MBTA_API_KEY = os.getenv('MBTA_API_KEY', 'your api key')
+MBTA_API_KEY = os.getenv('MBTA_API_KEY')
 MBTA_BASE_URL = "https://api-v3.mbta.com"
+
+
+def _is_valid_api_key(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    normalized = value.strip().lower()
+    return normalized not in {"", "your api key", "your_api_key", "changeme", "replace-me"}
 
 # OpenAI Configuration for LLM extraction
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-if not MBTA_API_KEY:
+if not _is_valid_api_key(MBTA_API_KEY):
     log.warning("MBTA_API_KEY not found in environment variables!")
 
 # LLM Client
+llm = None
 try:
     from src.exchange_agent.llm_client import get_llm_client
     llm = get_llm_client()
     log.info(f"✓ LLM provider: {llm.provider}")
 except LLMClientException as e:
-    log.critical(f"Failed to set up LLM provider: {e}")
-    sys.exit(1)
+    log.warning(f"Failed to set up LLM provider, continuing with fallback extraction: {e}")
 except RuntimeError as e:
-    log.warning(f"Runtime error in LLM setup: {e}")
+    log.warning(f"Runtime error in LLM setup, continuing with fallback extraction: {e}")
 
 # Pydantic models
 class A2AMessage(BaseModel):
@@ -404,7 +411,7 @@ def health():
         "ok": True,
         "service": "mbta-planner-agent",
         "version": "1.0.0",
-        "mbta_api_configured": MBTA_API_KEY is not None,
+        "mbta_api_configured": _is_valid_api_key(MBTA_API_KEY),
         "llm_extraction_available": openai_client is not None
     }
 
