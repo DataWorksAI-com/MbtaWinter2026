@@ -30,11 +30,18 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # Configuration
-MBTA_API_KEY = os.getenv('MBTA_API_KEY', 'your api key')
+MBTA_API_KEY = os.getenv('MBTA_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 MBTA_BASE_URL = "https://api-v3.mbta.com"
 
-if not MBTA_API_KEY:
+
+def _is_valid_api_key(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    normalized = value.strip().lower()
+    return normalized not in {"", "your api key", "your_api_key", "changeme", "replace-me"}
+
+if not _is_valid_api_key(MBTA_API_KEY):
     logger.warning("MBTA_API_KEY not found!")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not found - LLM disabled")
@@ -144,7 +151,8 @@ Return JSON: {{"has_landmark": true/false, "landmark_name": "...", "search_query
                 content = content.replace("```json", "").replace("```", "").strip()
             
             return json.loads(content)
-        except:
+        except Exception as e:
+            logger.warning(f"LLM landmark detection failed for '{query}': {e}")
             return {"has_landmark": False}
     
     def extract_route_from_query(self, query: str) -> Optional[str]:
@@ -198,7 +206,8 @@ Return JSON: {{"has_landmark": true/false, "landmark_name": "...", "search_query
                 text += f"\n... and {len(stops) - 10} more"
             
             return {"ok": True, "count": len(stops), "text": text}
-        except:
+        except Exception as e:
+            logger.error(f"Stop lookup failed (query={query}, route={route}): {e}")
             return {"ok": False, "text": "Error."}
     
     async def find_stops_by_search_terms(self, terms: set) -> Dict[str, Any]:
@@ -220,7 +229,8 @@ Return JSON: {{"has_landmark": true/false, "landmark_name": "...", "search_query
                 text += f"{i+1}. {s.get('attributes', {}).get('name')}\n"
             
             return {"ok": True, "count": len(matching), "text": text}
-        except:
+        except Exception as e:
+            logger.error(f"Search-term stop lookup failed (terms={sorted(terms)}): {e}")
             return {"ok": False, "text": "Error."}
     
     async def execute(self, context: RequestContext, event_queue: EventQueue):

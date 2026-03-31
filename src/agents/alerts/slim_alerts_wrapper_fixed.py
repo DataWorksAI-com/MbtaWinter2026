@@ -34,13 +34,20 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # Configuration
-MBTA_API_KEY = os.getenv('MBTA_API_KEY', 'your api key')
+MBTA_API_KEY = os.getenv('MBTA_API_KEY')
 MBTA_BASE_URL = "https://api-v3.mbta.com"
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-if not MBTA_API_KEY:
+
+def _is_valid_api_key(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    normalized = value.strip().lower()
+    return normalized not in {"", "your api key", "your_api_key", "changeme", "replace-me"}
+
+if not _is_valid_api_key(MBTA_API_KEY):
     logger.warning("MBTA_API_KEY not found!")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not found!")
@@ -217,7 +224,8 @@ class AlertsExecutor(AgentExecutor):
             created = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
             elapsed = datetime.now(created.tzinfo) - created
             return int(elapsed.total_seconds() / 60)
-        except:
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Failed to parse alert timestamp '{created_at}': {e}")
             return None
     
     def is_planned_work(self, alert: Dict) -> bool:
@@ -402,18 +410,19 @@ class AlertsExecutor(AgentExecutor):
                                     "occupancy": occ_info['status'],
                                     "occupancy_score": occ_info['score']
                                 })
-                            except:
-                                pass
+                            except (ValueError, TypeError) as e:
+                                logger.debug(f"Failed to parse prediction time '{arrival_time}': {e}")
                     
                     next_trains.sort(key=lambda t: t['minutes'])
                     result["next_trains"] = next_trains[:3]
                     
                     logger.info(f"✓ Matched {len(next_trains)} trains")
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Could not load prediction data for route {route}: {e}")
             
             return result
-        except:
+        except Exception as e:
+            logger.warning(f"Falling back to time-based crowding due to API failure: {e}")
             return self.get_time_based_crowding()
     
     def get_time_based_crowding(self) -> Dict[str, Any]:

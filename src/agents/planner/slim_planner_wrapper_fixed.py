@@ -31,13 +31,20 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # Configuration
-MBTA_API_KEY = os.getenv('MBTA_API_KEY', 'your api key')
+MBTA_API_KEY = os.getenv('MBTA_API_KEY')
 MBTA_BASE_URL = "https://api-v3.mbta.com"
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-if not MBTA_API_KEY:
+
+def _is_valid_api_key(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    normalized = value.strip().lower()
+    return normalized not in {"", "your api key", "your_api_key", "changeme", "replace-me"}
+
+if not _is_valid_api_key(MBTA_API_KEY):
     logger.warning("MBTA_API_KEY not found!")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not found - LLM disabled!")

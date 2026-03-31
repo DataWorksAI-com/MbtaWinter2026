@@ -418,6 +418,8 @@ def live():
         "service": "mbta-planner-agent",
         "version": "1.0.0",
         "startup_complete": APP_STARTUP_COMPLETE,
+        "mbta_api_configured": _is_valid_api_key(MBTA_API_KEY),
+        "llm_extraction_available": openai_client is not None
     }
 
 
