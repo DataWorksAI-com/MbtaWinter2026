@@ -37,6 +37,30 @@ spec:
             - /bin/sh
             - -c
             - |
+              set -eu
+
+              wait_for_agent_ready() {
+                agent_name="$1"
+                readiness_url="$2"
+                max_attempts="${3:-24}"
+                attempt=1
+
+                while [ "$attempt" -le "$max_attempts" ]; do
+                  response="$(curl -fsS --max-time 5 "$readiness_url" 2>/dev/null || true)"
+                  if [ -n "$response" ] && echo "$response" | grep -Eq '"ready"[[:space:]]*:[[:space:]]*true'; then
+                    echo "$agent_name is ready"
+                    return 0
+                  fi
+
+                  echo "$agent_name not ready yet (attempt $attempt/$max_attempts), retrying in 5s..."
+                  attempt=$((attempt + 1))
+                  sleep 5
+                done
+
+                echo "Timed out waiting for $agent_name readiness at $readiness_url"
+                return 1
+              }
+
               echo "Waiting for registry to be ready..."
               until curl -sf http://registry:6900/health; do
                 echo "Registry not ready yet, retrying in 5s..."
@@ -44,8 +68,9 @@ spec:
               done
               echo "Registry is ready!"
 
+              wait_for_agent_ready "Alerts Agent" "http://alerts-agent:8001/health"
               echo "Registering Alerts Agent..."
-              curl -s -X POST http://registry:6900/register \
+              curl -fsS -X POST http://registry:6900/register \
                 -H "Content-Type: application/json" \
                 -d '{
                   "agent_id": "mbta-alerts",
@@ -57,14 +82,15 @@ spec:
                   "status": "alive",
                   "protocol": "a2a",
                   "transport": "slim"
-                }'
-              curl -s -X PUT http://registry:6900/agents/mbta-alerts/status \
+                }' >/dev/null
+              curl -fsS -X PUT http://registry:6900/agents/mbta-alerts/status \
                 -H "Content-Type: application/json" \
-                -d '{"alive": true, "capabilities": ["alerts", "service_status", "delays", "disruptions"], "description": "Monitors and reports MBTA service alerts, delays, and disruptions for all transit lines including Red, Orange, Blue, Green, Silver, Commuter Rail, Bus, and Ferry. Provides real-time alert information."}'
+                -d '{"alive": true, "capabilities": ["alerts", "service_status", "delays", "disruptions"], "description": "Monitors and reports MBTA service alerts, delays, and disruptions for all transit lines including Red, Orange, Blue, Green, Silver, Commuter Rail, Bus, and Ferry. Provides real-time alert information."}' >/dev/null
 
               echo ""
+              wait_for_agent_ready "Planner Agent" "http://planner-agent:8002/health"
               echo "Registering Planner Agent..."
-              curl -s -X POST http://registry:6900/register \
+              curl -fsS -X POST http://registry:6900/register \
                 -H "Content-Type: application/json" \
                 -d '{
                   "agent_id": "mbta-planner",
@@ -76,14 +102,15 @@ spec:
                   "status": "alive",
                   "protocol": "a2a",
                   "transport": "slim"
-                }'
-              curl -s -X PUT http://registry:6900/agents/mbta-planner/status \
+                }' >/dev/null
+              curl -fsS -X PUT http://registry:6900/agents/mbta-planner/status \
                 -H "Content-Type: application/json" \
-                -d '{"alive": true, "capabilities": ["trip_planning", "route_finding", "transfers", "schedules"], "description": "Plans transit routes between locations in the Boston MBTA network. Can find optimal routes, transfers, and provide trip planning assistance using real-time schedule data."}'
+                -d '{"alive": true, "capabilities": ["trip_planning", "route_finding", "transfers", "schedules"], "description": "Plans transit routes between locations in the Boston MBTA network. Can find optimal routes, transfers, and provide trip planning assistance using real-time schedule data."}' >/dev/null
 
               echo ""
+              wait_for_agent_ready "StopFinder Agent" "http://stopfinder-agent:8003/health"
               echo "Registering StopFinder Agent..."
-              curl -s -X POST http://registry:6900/register \
+              curl -fsS -X POST http://registry:6900/register \
                 -H "Content-Type: application/json" \
                 -d '{
                   "agent_id": "mbta-stopfinder",
@@ -95,10 +122,10 @@ spec:
                   "status": "alive",
                   "protocol": "a2a",
                   "transport": "slim"
-                }'
-              curl -s -X PUT http://registry:6900/agents/mbta-stopfinder/status \
+                }' >/dev/null
+              curl -fsS -X PUT http://registry:6900/agents/mbta-stopfinder/status \
                 -H "Content-Type: application/json" \
-                -d '{"alive": true, "capabilities": ["stop_search", "station_info", "accessibility", "nearby_stops"], "description": "Finds MBTA stops and stations by name, location, or route. Provides stop details including accessibility, available routes, and nearby connections."}'
+                -d '{"alive": true, "capabilities": ["stop_search", "station_info", "accessibility", "nearby_stops"], "description": "Finds MBTA stops and stations by name, location, or route. Provides stop details including accessibility, available routes, and nearby connections."}' >/dev/null
 
               echo ""
               echo "✅ All agents registered and marked alive!"

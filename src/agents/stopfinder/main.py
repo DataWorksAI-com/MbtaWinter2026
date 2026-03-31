@@ -40,13 +40,14 @@ except Exception as e:
 # MBTA API Configuration
 MBTA_API_KEY = os.getenv('MBTA_API_KEY')
 MBTA_BASE_URL = "https://api-v3.mbta.com"
+INVALID_API_KEY_VALUES = {"", "your api key", "your_api_key", "changeme", "replace-me"}
+APP_STARTUP_COMPLETE = False
 
 
 def _is_valid_api_key(value: Optional[str]) -> bool:
     if not value:
         return False
-    normalized = value.strip().lower()
-    return normalized not in {"", "your api key", "your_api_key", "changeme", "replace-me"}
+    return value.strip().lower() not in INVALID_API_KEY_VALUES
 
 if not _is_valid_api_key(MBTA_API_KEY):
     log.warning("MBTA_API_KEY not found in environment variables!")
@@ -346,15 +347,36 @@ def get_stop_by_id(stop_id: str) -> Dict[str, Any]:
         }
 
 
-@app.get("/health")
-def health():
-    """Health check endpoint"""
+@app.on_event("startup")
+def mark_startup_complete():
+    global APP_STARTUP_COMPLETE
+    APP_STARTUP_COMPLETE = True
+
+
+@app.get("/live")
+def live():
     return {
         "ok": True,
         "service": "mbta-stopfinder-agent",
         "version": "1.0.0",
+        "startup_complete": APP_STARTUP_COMPLETE,
         "mbta_api_configured": _is_valid_api_key(MBTA_API_KEY)
     }
+
+
+@app.get("/health")
+def health():
+    """Readiness endpoint for registration and Kubernetes probes."""
+    ready = APP_STARTUP_COMPLETE and _is_valid_api_key(MBTA_API_KEY)
+    payload = {
+        "ok": True,
+        "ready": ready,
+        "service": "mbta-stopfinder-agent",
+        "version": "1.0.0",
+        "startup_complete": APP_STARTUP_COMPLETE,
+        "mbta_api_configured": _is_valid_api_key(MBTA_API_KEY)
+    }
+    return JSONResponse(status_code=200 if ready else 503, content=payload)
 
 
 @app.get("/stops")

@@ -1,0 +1,24 @@
+Engineering Blog Entry - 2026-03-30
+
+Context
+This branch tightened the gap between deploying MBTA agents and registering them into the local NANDA registry. Before this change, the registration job waited only for the registry service itself. Once the registry was reachable, the job immediately registered alerts, planner, and stopfinder and then marked each one alive. That meant the registry could advertise agents that were still booting, had invalid MBTA credentials, or in planner's case could fail startup entirely because optional LLM initialization exited the process.
+
+Why We Changed It
+The failure mode was not subtle: the registry state could become more optimistic than the actual runtime state of the agents. That is exactly the sort of mismatch that makes distributed systems feel unreliable. Discovery would say an agent is available while callers hit a service that is not actually ready to answer. The fix on this branch was to make readiness explicit, make liveness independent, and make registration depend on readiness instead of process presence.
+
+Implementation Approach
+We kept the scope tight and stayed out of switchboard federation logic. The branch focuses on the local readiness contract used by Kubernetes and the registration job. First, the HTTP agents now expose two distinct signals: `/live` for process liveness and `/health` for readiness. The readiness endpoint now reports whether startup finished and whether the MBTA API key is genuinely valid instead of merely non-null. For planner, we also removed the hard exit on LLM client initialization failures and kept the existing fallback path available so optional LLM setup does not block service startup.
+
+Major Changes
+1. Added strict MBTA key validation to alerts, planner, and stopfinder HTTP services.
+2. Added `/live` endpoints so liveness probes no longer depend on readiness conditions.
+3. Changed `/health` to return a non-success status until the service is safe to register.
+4. Updated Kubernetes liveness probes to use `/live` while keeping readiness probes on `/health`.
+5. Reworked the register-agents job so it waits per agent for readiness before calling `/register` and before marking the agent alive.
+6. Added a small validation script to verify agent readiness and registry alive-state consistency.
+
+Validation
+Validation on the branch is focused and operator-friendly. I checked the edited Python and Kubernetes files for errors, confirmed the new health contract compiles cleanly, and added a reusable readiness verification script under scripts/. The intended deployment validation is straightforward: deploy the branch, confirm each agent returns 200 from `/live`, confirm `/health` stays non-ready when configuration is invalid, run the register-agents job, and then verify that the registry reports alive only after the agent itself is ready.
+
+Risks and Next Steps
+This branch intentionally does not add SLIM transport-specific readiness checks, so the remaining residual risk is that HTTP readiness could still be green while a SLIM wrapper has its own problem. That is a separate hardening task if we see it in practice. The immediate next step is to run this branch in-cluster, execute the registration job, and confirm that broken configuration now blocks registration instead of silently publishing false-positive alive agents.
