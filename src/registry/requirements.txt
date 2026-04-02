@@ -2,3 +2,7 @@ flask>=3.0
 flask-cors>=4.0
 pymongo>=4.6
 gunicorn>=21.2
+# AGNTCY Directory SDK for gRPC-native ADS federation.
+# Requires grpcio and protobuf; no conflict in the registry container since
+# it does not bundle OpenTelemetry.
+agntcy-dir>=1.0.0

@@ -35,7 +35,17 @@ SWITCHBOARD_TIMEOUT_SECONDS = float(os.getenv("SWITCHBOARD_TIMEOUT_SECONDS", "5"
 AGNTCY_ADS_URL = (os.getenv("AGNTCY_ADS_URL") or "").rstrip("/")
 AGNTCY_ADS_SEARCH_PATH = os.getenv("AGNTCY_ADS_SEARCH_PATH", "/v1/search")
 AGNTCY_ADS_TOKEN = (os.getenv("AGNTCY_ADS_TOKEN") or "").strip()
+AGNTCY_ADS_GRPC_ADDRESS = (os.getenv("AGNTCY_ADS_GRPC_ADDRESS") or "").strip()
 NEU_REGISTRY_URL = (os.getenv("NEU_REGISTRY_URL") or "").rstrip("/")
+
+# Try importing the official AGNTCY DIR SDK for gRPC-native lookups.
+# Falls back to the legacy HTTP adapter when the SDK is not installed.
+try:
+    from agntcy.dir_sdk.client import Client as _DirClient, Config as _DirConfig
+    from agntcy.dir_sdk.models import search_v1 as _search_v1
+    _AGNTCY_SDK_AVAILABLE = True
+except Exception:
+    _AGNTCY_SDK_AVAILABLE = False
 
 ENABLE_EXTERNAL_REGISTRATION = _env_bool("ENABLE_EXTERNAL_REGISTRATION", default=False)
 NEU_REGISTRY_REGISTER_URL = (os.getenv("NEU_REGISTRY_REGISTER_URL") or "").rstrip("/")
@@ -283,7 +293,42 @@ def _query_neu(agent_name: str) -> Optional[Dict[str, Any]]:
     return payload
 
 
+def _query_agntcy_grpc(agent_name: str) -> Optional[Dict[str, Any]]:
+    """Query AGNTCY ADS via the official gRPC SDK."""
+    if not AGNTCY_ADS_GRPC_ADDRESS or not _AGNTCY_SDK_AVAILABLE:
+        return None
+
+    try:
+        config = _DirConfig(server_address=AGNTCY_ADS_GRPC_ADDRESS)
+        client = _DirClient(config)
+
+        search_request = _search_v1.SearchRequest(name=agent_name, limit=5)
+        refs = list(client.search_cids(search_request))
+        if not refs:
+            return None
+
+        records = list(client.pull(refs[:1]))
+        if not records:
+            return None
+
+        from google.protobuf.json_format import MessageToDict
+        raw = MessageToDict(records[0])
+        data = raw.get("data", raw)
+        return _translate_agntcy_record(data, agent_name)
+
+    except Exception as e:
+        print(f"⚠️  AGNTCY gRPC error for '{agent_name}': {e}")
+        return None
+
+
 def _query_agntcy(agent_name: str) -> Optional[Dict[str, Any]]:
+    # Prefer gRPC SDK when address is configured and SDK is available.
+    if AGNTCY_ADS_GRPC_ADDRESS and _AGNTCY_SDK_AVAILABLE:
+        result = _query_agntcy_grpc(agent_name)
+        if result is not None:
+            return result
+        # Fall through to legacy HTTP if gRPC fails
+
     if not AGNTCY_ADS_URL:
         return None
 
@@ -436,51 +481,71 @@ def _diagnose_neu(sample_agent: str) -> Dict[str, Any]:
 
 def _diagnose_agntcy(sample_agent: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
-        "configured": bool(AGNTCY_ADS_URL),
-        "server_address": AGNTCY_ADS_URL,
+        "configured": bool(AGNTCY_ADS_GRPC_ADDRESS) or bool(AGNTCY_ADS_URL),
+        "grpc_address": AGNTCY_ADS_GRPC_ADDRESS,
+        "grpc_sdk_available": _AGNTCY_SDK_AVAILABLE,
+        "http_url": AGNTCY_ADS_URL,
         "search_path": AGNTCY_ADS_SEARCH_PATH,
         "state": "not_configured",
     }
-    if not AGNTCY_ADS_URL:
+    if not AGNTCY_ADS_GRPC_ADDRESS and not AGNTCY_ADS_URL:
         return out
 
-    headers: Dict[str, str] = {}
-    if AGNTCY_ADS_TOKEN:
-        headers["Authorization"] = f"Bearer {AGNTCY_ADS_TOKEN}"
+    # Try gRPC path first
+    if AGNTCY_ADS_GRPC_ADDRESS and _AGNTCY_SDK_AVAILABLE:
+        out["sample_agent"] = sample_agent
+        grpc_result = _query_agntcy_grpc(sample_agent)
+        if grpc_result is not None:
+            out["state"] = "reachable_found"
+            out["adapter"] = "grpc"
+            return out
+        else:
+            out["grpc_probe"] = "no_result_or_error"
 
-    query = urlencode({"name": sample_agent})
-    url = f"{AGNTCY_ADS_URL}{AGNTCY_ADS_SEARCH_PATH}?{query}"
-    probe = _http_probe_json(url, headers=headers)
-    out["sample_agent"] = sample_agent
-    out["sample_probe"] = {
-        "status_code": probe.get("status_code"),
-        "error": probe.get("error"),
-    }
+    # Fall back to HTTP probe
+    if AGNTCY_ADS_URL:
+        headers: Dict[str, str] = {}
+        if AGNTCY_ADS_TOKEN:
+            headers["Authorization"] = f"Bearer {AGNTCY_ADS_TOKEN}"
 
-    if not probe.get("ok"):
-        out["state"] = "upstream_unavailable"
-        return out
+        query = urlencode({"name": sample_agent})
+        url = f"{AGNTCY_ADS_URL}{AGNTCY_ADS_SEARCH_PATH}?{query}"
+        probe = _http_probe_json(url, headers=headers)
+        out["sample_agent"] = sample_agent
+        out["sample_probe"] = {
+            "status_code": probe.get("status_code"),
+            "error": probe.get("error"),
+        }
 
-    data = probe.get("data")
-    candidates = _agntcy_candidates_from_data(data)
-    out["sample_probe"]["candidate_count"] = len(candidates)
+        if not probe.get("ok"):
+            out["state"] = "upstream_unavailable"
+            return out
 
-    if candidates:
-        for candidate in candidates:
-            name = str(candidate.get("name", "")).strip()
-            if name == sample_agent or name.endswith(sample_agent):
-                out["state"] = "reachable_found"
-                return out
-        out["state"] = "reachable_empty_result"
-        return out
+        data = probe.get("data")
+        candidates = _agntcy_candidates_from_data(data)
+        out["sample_probe"]["candidate_count"] = len(candidates)
 
-    if isinstance(data, dict):
-        known_shape = any(k in data for k in ("records", "results", "items", "agents", "record", "name"))
-        out["state"] = "reachable_empty_result" if known_shape else "reachable_schema_mismatch"
-        out["sample_probe"]["top_level_keys"] = list(data.keys())[:20]
-        return out
+        if candidates:
+            for candidate in candidates:
+                name = str(candidate.get("name", "")).strip()
+                if name == sample_agent or name.endswith(sample_agent):
+                    out["state"] = "reachable_found"
+                    out["adapter"] = "http"
+                    return out
+            out["state"] = "reachable_empty_result"
+            return out
 
-    out["state"] = "reachable_schema_mismatch"
+        if isinstance(data, dict):
+            known_shape = any(k in data for k in ("records", "results", "items", "agents", "record", "name"))
+            out["state"] = "reachable_empty_result" if known_shape else "reachable_schema_mismatch"
+            out["sample_probe"]["top_level_keys"] = list(data.keys())[:20]
+            return out
+
+    # gRPC configured but no HTTP fallback and gRPC didn't return a result
+    if AGNTCY_ADS_GRPC_ADDRESS:
+        out["state"] = "grpc_configured_no_result"
+    else:
+        out["state"] = "reachable_schema_mismatch"
     return out
 
 
