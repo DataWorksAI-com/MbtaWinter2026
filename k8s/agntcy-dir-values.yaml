@@ -1,0 +1,42 @@
+fullnameOverride: mbta-ads
+
+postgresql:
+  enabled: true
+  auth:
+    username: dir
+    password: dir
+    database: dir
+
+zot:
+  enabled: true
+
+# Development/demo-oriented values for the official AGNTCY Directory chart.
+# These defaults are intentionally insecure and should not be reused for production.
+config:
+  listen_address: "0.0.0.0:8888"
+  routing:
+    listen_address: "/ip4/0.0.0.0/tcp/5555"
+    datastore_dir: "/etc/routing/datastore"
+    directory_api_address: "mbta-ads-apiserver.mbta-ads.svc.cluster.local:8888"
+    gossipsub:
+      enabled: false
+  database:
+    type: "postgres"
+    postgres:
+      port: 5432
+      database: "dir"
+      ssl_mode: "disable"
+  store:
+    provider: "oci"
+    oci:
+      auth_config:
+        insecure: true
+  authn:
+    enabled: false
+  authz:
+    enabled: true
+    policy:
+      - "p,*,*"
+
+externalSecrets:
+  enabled: false

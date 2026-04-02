@@ -1,0 +1,43 @@
+fullnameOverride: mbta-ads
+
+postgresql:
+  enabled: true
+  auth:
+    username: dir
+    password: dir
+    database: dir
+
+zot:
+  enabled: true
+
+# Development-oriented example values for the official AGNTCY Directory chart.
+# Review these against the upstream chart version you deploy.
+config:
+  listen_address: "0.0.0.0:8888"
+  routing:
+    listen_address: "/ip4/0.0.0.0/tcp/5555"
+    datastore_dir: "/etc/routing/datastore"
+    directory_api_address: "mbta-ads-apiserver.mbta-ads.svc.cluster.local:8888"
+    gossipsub:
+      enabled: false
+  database:
+    type: "postgres"
+    postgres:
+      port: 5432
+      database: "dir"
+      ssl_mode: "disable"
+  store:
+    provider: "oci"
+    oci:
+      auth_config:
+        insecure: true
+  authn:
+    enabled: false
+  authz:
+    enabled: true
+    policy:
+      - "p,*,*"
+
+# Enable and customize these later if you adopt authenticated SPIRE-based federation.
+externalSecrets:
+  enabled: false

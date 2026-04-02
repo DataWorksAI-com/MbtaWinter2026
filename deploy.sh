@@ -9,6 +9,10 @@
 #
 # Usage:
 #   export DOCKER_REGISTRY=your-registry.example.com/mbta
+#   export DEPLOY_INTERNAL_AGNTCY_ADS=true                    # optional, deploy official AGNTCY DIR chart in-cluster
+#   export AGNTCY_DIR_CHART_VERSION=v1.0.0                   # optional, default shown here for demo branch
+#   export AGNTCY_DIR_RELEASE_NAME=mbta-ads                  # optional, default shown here for demo branch
+#   export AGNTCY_DIR_NAMESPACE=mbta-ads                     # optional, default shown here for demo branch
 #   bash deploy.sh [build|push|apply|all]
 #
 # Build settings (optional):
@@ -30,6 +34,56 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+configmap_value() {
+  local key="$1"
+  awk -F': ' -v key="$key" '$1 == "  " key { print $2; exit }' "${SCRIPT_DIR}/k8s/configmap.yaml" | tr -d '"'
+}
+
+validate_ads_config() {
+  local federation_enabled ads_url ads_search_path
+  federation_enabled="$(configmap_value ENABLE_FEDERATION)"
+  ads_url="$(configmap_value AGNTCY_ADS_URL)"
+  ads_search_path="$(configmap_value AGNTCY_ADS_SEARCH_PATH)"
+
+  if [[ "${federation_enabled}" == "true" && -z "${ads_url}" ]]; then
+    warn "ENABLE_FEDERATION is true but AGNTCY_ADS_URL is empty in k8s/configmap.yaml."
+    warn "Internal ADS will not participate in federation until AGNTCY_ADS_URL is configured."
+  fi
+
+  if [[ -n "${ads_url}" && "${ads_search_path}" == "/v1/search" ]]; then
+    warn "The current MBTA registry adapter still uses legacy HTTP AGNTCY settings."
+    warn "Official AGNTCY DIR/ADS exposes gRPC on port 8888, so live ADS lookups still require a follow-up adapter update."
+  fi
+}
+
+deploy_internal_ads() {
+  if [[ "${DEPLOY_INTERNAL_AGNTCY_ADS:-false}" != "true" ]]; then
+    return 0
+  fi
+
+  if ! command -v helm >/dev/null 2>&1; then
+    error "helm is required when DEPLOY_INTERNAL_AGNTCY_ADS=true"
+  fi
+
+  local values_file release_name chart_version namespace
+  values_file="${AGNTCY_DIR_VALUES_FILE:-${SCRIPT_DIR}/k8s/agntcy-dir-values.yaml}"
+  release_name="${AGNTCY_DIR_RELEASE_NAME:-mbta-ads}"
+  chart_version="${AGNTCY_DIR_CHART_VERSION:-v1.0.0}"
+  namespace="${AGNTCY_DIR_NAMESPACE:-mbta-ads}"
+
+  if [[ ! -f "${values_file}" ]]; then
+    error "Internal ADS requested but values file not found at ${values_file}. Create it from k8s/agntcy-dir-values.example.yaml."
+  fi
+
+  info "Deploying internal AGNTCY DIR via Helm chart (${chart_version})..."
+  helm upgrade --install "${release_name}" \
+    oci://ghcr.io/agntcy/dir/helm-charts/dir \
+    --version "${chart_version}" \
+    --namespace "${namespace}" \
+    --create-namespace \
+    -f "${values_file}"
+}
 
 get_dockerhub_creds() {
   if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
@@ -159,10 +213,12 @@ apply() {
   fi
 
   # Apply non-templated manifests
+  validate_ads_config
   kubectl apply -f "${SCRIPT_DIR}/k8s/namespace.yaml"
   kubectl apply -f "${SCRIPT_DIR}/k8s/configmap.yaml"
   kubectl apply -f "${SCRIPT_DIR}/k8s/secrets.yaml"
   kubectl apply -f "${SCRIPT_DIR}/k8s/observability.yaml"
+  deploy_internal_ads
 
   # Replace image placeholders in manifests with actual registry
   info "Substituting image registry in manifests..."
