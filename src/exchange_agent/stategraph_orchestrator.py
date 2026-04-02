@@ -5,7 +5,7 @@ Version: 4.4 - Domain Expert Coordination
 """
 
 import os
-from typing import TypedDict, Annotated, Sequence, Literal, Dict, List, Any
+from typing import TypedDict, Annotated, Sequence, Literal, Dict, List, Any, Optional
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 import operator
@@ -85,6 +85,51 @@ class AgentConfig:
     description: str
     capabilities: List[str]
     discovered_from_registry: bool = True
+    # Full base URL from registry (may include path, e.g. .../a2a). Used to build A2A POST URL.
+    agent_public_url: Optional[str] = None
+
+
+def _default_port_for_scheme(scheme: str, parsed_port: Optional[int]) -> int:
+    if parsed_port is not None:
+        return parsed_port
+    return 443 if scheme == "https" else 80
+
+
+def _a2a_post_url(agent_url: str) -> str:
+    """Build POST URL for A2A message from registry agent_url / endpoint."""
+    base = (agent_url or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if base.endswith("/a2a"):
+        return f"{base}/message"
+    return f"{base}/a2a/message"
+
+
+def agent_row_to_config(ainfo: Dict[str, Any]) -> AgentConfig:
+    raw_url = (ainfo.get("agent_url") or "").strip()
+    p = urlparse(raw_url)
+    scheme = p.scheme or "http"
+    port = _default_port_for_scheme(scheme, p.port)
+    host = p.hostname or ""
+    origin = f"{scheme}://{host}" if host else raw_url
+    caps = ainfo.get("capabilities") if isinstance(ainfo.get("capabilities"), list) else []
+    return AgentConfig(
+        name=ainfo["agent_id"],
+        url=origin,
+        port=port,
+        description=ainfo.get("description") or "",
+        capabilities=caps,
+        agent_public_url=raw_url or None,
+    )
+
+
+def _is_alerts_agent(agent_id: str) -> bool:
+    return "mbta-alerts" in agent_id
+
+
+def _is_planner_agent(agent_id: str) -> bool:
+    aid = agent_id.lower()
+    return "mbta-planner" in aid or "route-planner" in aid
 
 
 # ============================================================================
@@ -276,25 +321,75 @@ async def get_agent_catalog() -> List[Dict]:
         if datetime.now() - _catalog_cache_time < _catalog_cache_ttl:
             return _agent_catalog_cache
     
-    try:
-        import urllib.request as _ur, asyncio as _aio, json as _json
-        _resp = await _aio.to_thread(
-            lambda: _json.loads(_ur.urlopen(f"{REGISTRY_URL}/list", timeout=10).read())
-        )
-        agent_list = _resp
+    base = REGISTRY_URL.rstrip("/")
 
-        agents = []
+    async def _load_nanda_style() -> List[Dict]:
+        import urllib.request as _ur, asyncio as _aio, json as _json
+
+        agent_list = await _aio.to_thread(
+            lambda: _json.loads(_ur.urlopen(f"{base}/list", timeout=10).read())
+        )
+        if not isinstance(agent_list, dict):
+            raise ValueError("registry /list is not a JSON object")
+
+        agents: List[Dict] = []
         for aid in agent_list.keys():
-            if aid == 'agent_status':
+            if aid == "agent_status":
                 continue
             try:
                 _ar = await _aio.to_thread(
-                    lambda a=aid: _json.loads(_ur.urlopen(f"{REGISTRY_URL}/agents/{a}", timeout=10).read())
+                    lambda a=aid: _json.loads(_ur.urlopen(f"{base}/agents/{a}", timeout=10).read())
                 )
                 if _ar.get("alive") or _ar.get("status") == "alive" or True:
                     agents.append(_ar)
-            except:
+            except Exception:
                 pass
+        return agents
+
+    async def _load_nest_style() -> List[Dict]:
+        """Project Nanda Nest: GET {base}/agents → {\"agents\": [...]} with id, endpoint, description."""
+        import urllib.request as _ur, asyncio as _aio, json as _json
+
+        raw = await _aio.to_thread(
+            lambda: _ur.urlopen(f"{base}/agents", timeout=15).read().decode("utf-8")
+        )
+        data = _json.loads(raw)
+        rows = data.get("agents") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("registry /agents missing agents array")
+
+        agents: List[Dict] = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            eid = item.get("id")
+            endpoint = (item.get("endpoint") or "").strip()
+            if not eid or not endpoint:
+                continue
+            spec = item.get("specialties")
+            caps = spec if isinstance(spec, list) else []
+            agents.append(
+                {
+                    "agent_id": eid,
+                    "agent_url": endpoint,
+                    "description": item.get("description") or item.get("name") or "",
+                    "capabilities": caps,
+                    "alive": str(item.get("status", "")).lower() == "online",
+                }
+            )
+        return agents
+
+    try:
+        agents: List[Dict] = []
+        try:
+            agents = await _load_nanda_style()
+        except Exception as e:
+            logger.info(f"Registry /list path failed ({type(e).__name__}: {e}), trying /agents (Nest style)")
+            try:
+                agents = await _load_nest_style()
+            except Exception as e2:
+                logger.error(f"Registry /agents failed: {e2}")
+                agents = []
 
         _agent_catalog_cache = agents
         _catalog_cache_time = datetime.now()
@@ -320,33 +415,34 @@ Query: "{query}"
 Available Agents:
 {catalog_text}
 
-MATCHING RULES:
-1. If query is ONLY about alerts/delays/disruptions (no routing, no weather) → ONLY mbta-alerts
+MATCHING RULES (use exact agent_id strings from Available Agents — Nest may use prefixes like skill-mbta-...):
+1. If query is ONLY about alerts/delays/disruptions (no routing, no weather) → ONLY the alerts agent
+   (id contains mbta-alerts, e.g. mbta-alerts or skill-mbta-alerts).
    Examples: "Red Line delays?", "Should I wait?", "How long will delays last?", "Why delays?"
 
-2. If query asks for route/directions with origin and destination → mbta-stopfinder + mbta-alerts + mbta-planner
-   Examples: "Route from Park to Harvard", "Get from X to Y", "How do I get to Harvard?"
+2. If query asks for route/directions with origin and destination → stopfinder + alerts + planner agents
+   (ids containing stopfinder/stops, mbta-alerts, mbta-planner or route-planner).
 
-3. If query asks about stops/stations (no routing) → ONLY mbta-stopfinder
-   Examples: "Find Harvard station", "Stops on Red Line"
+3. If query asks about stops/stations (no routing) → ONLY the stopfinder agent.
 
 4. If query is about Boston-area weather, commute weather risk, or MBTA service risk from conditions
    (snow, ice, freezing rain, sleet, rain, wind, flooding, fog, heat, cold, "should I leave earlier",
-   "will the T be ok", "is the Red Line safe in this weather") → include mbta-boston-weather-agent.
-   If the query is ONLY weather/transit-risk (no live delay question, no routing) → ONLY mbta-boston-weather-agent.
+   "will the T be ok", "is the Red Line safe in this weather") → include the Boston weather agent
+   (id contains boston-weather or mbta-boston-weather, e.g. mbta-boston-weather-agent or skill-mbta-boston-weather-agent).
+   If the query is ONLY weather/transit-risk (no live delay question, no routing) → ONLY that weather agent.
 
-5. If query combines weather/disruption risk with a specific trip (from X to Y) → mbta-boston-weather-agent
-   plus mbta-stopfinder + mbta-alerts + mbta-planner (same as rule 2, plus weather).
+5. If query combines weather/disruption risk with a specific trip (from X to Y) → weather agent
+   plus stopfinder + alerts + planner (same as rule 2, plus weather).
 
 6. If query asks both about weather/transit-risk AND current service problems (no explicit from/to route) →
-   mbta-boston-weather-agent + mbta-alerts.
+   weather agent + alerts agent.
 
-DO NOT match mbta-planner for queries that don't have explicit routing intent (from X to Y).
-DO NOT match mbta-planner for queries asking about delay duration, wait times, or disruption analysis alone.
-DO NOT match mbta-boston-weather-agent when the user only asks about schedules or stops with no weather or climate mention.
+DO NOT match the planner agent for queries that don't have explicit routing intent (from X to Y).
+DO NOT match the planner for queries asking about delay duration, wait times, or disruption analysis alone.
+Do not match the weather agent when the user only asks about schedules or stops with no weather or climate mention.
 
 Return JSON with ONLY the agents truly needed: {{"matched_agents": ["id1", "id2"]}}
-Use exact agent_id strings from the Available Agents list (e.g. mbta-boston-weather-agent).
+Use exact agent_id strings from the Available Agents list.
 """
     
     try:
@@ -378,14 +474,7 @@ Use exact agent_id strings from the Available Agents list (e.g. mbta-boston-weat
         for aid in matched_ids:
             ainfo = next((a for a in catalog if a['agent_id'] == aid), None)
             if ainfo:
-                p = urlparse(ainfo['agent_url'])
-                configs.append(AgentConfig(
-                    name=ainfo['agent_id'],
-                    url=f"{p.scheme or 'http'}://{p.hostname}",
-                    port=p.port or 80,
-                    description=ainfo['description'],
-                    capabilities=ainfo.get('capabilities', [])
-                ))
+                configs.append(agent_row_to_config(ainfo))
         
         logger.info(f"✓ Discovery: {matched_ids}")
         return configs
@@ -414,7 +503,10 @@ async def call_agent_slim(slim_client, config: AgentConfig, msg: str) -> Dict:
 
 
 async def call_agent_http(config: AgentConfig, msg: str, conv_id: str) -> Dict:
-    url = f"{config.url}:{config.port}/a2a/message"
+    if config.agent_public_url:
+        url = _a2a_post_url(config.agent_public_url)
+    else:
+        url = f"{config.url}:{config.port}/a2a/message"
     payload = {
         "type": "request",
         "payload": {"message": msg, "conversation_id": conv_id},
@@ -529,8 +621,9 @@ def routing_node(state: AgentState) -> AgentState:
                 ordered.append(a)
                 break
         
-        if not any("alerts" in a for a in ordered):
-            ordered.append("mbta-alerts")
+        if not any(_is_alerts_agent(a) for a in ordered):
+            alerts_fallback = next((m for m in matched if _is_alerts_agent(m)), None)
+            ordered.append(alerts_fallback or "mbta-alerts")
         
         for a in matched:
             if "planner" in a or "route" in a:
@@ -590,14 +683,7 @@ async def execute_agents_node(state: AgentState) -> AgentState:
         if stopfinder_id and (not origin_is_station or not dest_is_station):
             ainfo = next((a for a in catalog if a['agent_id'] == stopfinder_id), None)
             if ainfo:
-                p = urlparse(ainfo['agent_url'])
-                sf_config = AgentConfig(
-                    name=ainfo['agent_id'],
-                    url=f"{p.scheme or 'http'}://{p.hostname}",
-                    port=p.port or 80,
-                    description=ainfo['description'],
-                    capabilities=ainfo.get('capabilities', [])
-                )
+                sf_config = agent_row_to_config(ainfo)
                 
                 logger.info(f"📍 Resolving landmarks with StopFinder...")
                 
@@ -643,21 +729,14 @@ async def execute_agents_node(state: AgentState) -> AgentState:
             if not ainfo:
                 continue
             
-            p = urlparse(ainfo['agent_url'])
-            config = AgentConfig(
-                name=ainfo['agent_id'],
-                url=f"{p.scheme or 'http'}://{p.hostname}",
-                port=p.port or 80,
-                description=ainfo['description'],
-                capabilities=ainfo.get('capabilities', [])
-            )
+            config = agent_row_to_config(ainfo)
             
             # Construct query
-            if agent_id == "mbta-alerts":
+            if _is_alerts_agent(agent_id):
                 agent_query = state["user_message"]  # Pass full query for context
                 logger.info(f"⚠️ Alerts Agent")
             
-            elif agent_id in ["mbta-planner", "mbta-route-planner"]:
+            elif _is_planner_agent(agent_id):
                 # Planner: Use RESOLVED station names + alerts context
                 from_station = resolved_origin if resolved_origin else origin
                 to_station = resolved_destination if resolved_destination else destination
@@ -738,7 +817,7 @@ Plan the route between these stations."""
                     resp_text = result.get("response", "")
                     
                     # NEW: Extract domain analysis from Alerts Agent
-                    if agent_id == "mbta-alerts":
+                    if _is_alerts_agent(agent_id):
                         # Extract domain expertise insights
                         alerts_analysis = extract_alerts_domain_analysis(resp_text)
                         

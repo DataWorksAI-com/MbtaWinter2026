@@ -511,7 +511,7 @@ MbtaWinter2026/
 | `OPENAI_MODEL` | Exchange, Planner | OpenAI model. Default: `gpt-4o-mini` |
 | `MBTA_API_KEY` | All agents | MBTA v3 API key |
 | `USE_SLIM` | Exchange | Enable SLIM transport (`true`/`false`) |
-| `REGISTRY_URL` | Exchange | NANDA registry endpoint (may point at an external API if catalog paths match) |
+| `REGISTRY_URL` | Exchange | Registry API base (e.g. `http://registry:6900` or `https://nest.projectnanda.org/api`). Exchange tries Flask-style `GET /list` then `GET /agents/{id}`; if that fails, Nest-style `GET /agents` (`{"agents":[...]}` with `id`, `endpoint`, `description`). Health check: `GET {REGISTRY_URL}/health`. |
 | `ENABLE_FEDERATION` | Registry | Enable switchboard-style federated lookups across registries |
 | `AGNTCY_ADS_URL` | Registry | AGNTCY ADS base URL used by the federation adapter |
 | `AGNTCY_ADS_SEARCH_PATH` | Registry | AGNTCY search path (default: `/v1/search`) |
