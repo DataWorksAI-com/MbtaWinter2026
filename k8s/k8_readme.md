@@ -391,19 +391,8 @@ docker compose up --build
 | Jaeger (Traces) | http://localhost:16686 |
 | Grafana (Metrics) | http://localhost:3001 |
 | NANDA Registry | http://localhost:6900 |
-| Weather agent (A2A) | http://localhost:8004 |
 
 ### 4. Register agents (first time only)
-
-For the Boston weather agent after `docker compose up`, run (from the repo root; uses host port 8004 for readiness, Docker DNS for `agent_url` so Exchange can reach it):
-
-```bash
-bash scripts/register_weather_agent.sh
-```
-
-Or register manually with the same JSON as in [k8s/register-agents-job.yaml](register-agents-job.yaml) (`mbta-boston-weather-agent`, `agent_url` must resolve inside the Compose network, e.g. `http://weather-agent:8004`).
-
-The upstream [weather-agent](https://github.com/willdaly/weather-agent) `/health` response includes `"ready": true`, matching `wait_for_agent_ready` in the register job.
 
 macOS:
 ```bash
@@ -501,8 +490,7 @@ MbtaWinter2026/
 ├── k8s/                                # Kubernetes manifests
 │   ├── configmap.yaml                  # Now includes LLM_PROVIDER, ANTHROPIC_MODEL, OPENAI_MODEL
 │   ├── secrets.yaml                    # Now includes ANTHROPIC_API_KEY
-│   ├── register-agents-job.yaml        # Registers MBTA agents + mbta-boston-weather-agent
-│   ├── weather-agent.yaml              # Boston weather HTTP agent (8004)
+│   ├── register-agents-job.yaml        # Registers in-cluster MBTA agents with NANDA
 │   └── ...
 ├── docker-compose.yaml
 ├── deploy.sh
@@ -523,9 +511,7 @@ MbtaWinter2026/
 | `OPENAI_MODEL` | Exchange, Planner | OpenAI model. Default: `gpt-4o-mini` |
 | `MBTA_API_KEY` | All agents | MBTA v3 API key |
 | `USE_SLIM` | Exchange | Enable SLIM transport (`true`/`false`) |
-| `REGISTRY_URL` | Exchange | NANDA registry endpoint |
-| `WEATHER_AGENT_HTTP_URL` | ConfigMap | Cluster URL for weather agent HTTP (8004) |
-| `WEATHER_API_KEY` | Weather agent (secret, optional) | OpenWeatherMap key; omit for simulated forecasts |
+| `REGISTRY_URL` | Exchange | NANDA registry endpoint (may point at an external API if catalog paths match) |
 | `ENABLE_FEDERATION` | Registry | Enable switchboard-style federated lookups across registries |
 | `AGNTCY_ADS_URL` | Registry | AGNTCY ADS base URL used by the federation adapter |
 | `AGNTCY_ADS_SEARCH_PATH` | Registry | AGNTCY search path (default: `/v1/search`) |
@@ -549,7 +535,7 @@ MbtaWinter2026/
 | `GET` | `/` | Health check |
 | `POST` | `/chat` | Send a query (auto-routes MCP vs A2A) |
 
-### Agents (ports 8001–8004)
+### Agents (ports 8001–8003)
 
 | Method | Path | Description |
 |--------|------|-------------|

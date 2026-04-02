@@ -128,24 +128,6 @@ spec:
                 -d '{"alive": true, "capabilities": ["stop_search", "station_info", "accessibility", "nearby_stops"], "description": "Finds MBTA stops and stations by name, location, or route. Provides stop details including accessibility, available routes, and nearby connections."}' >/dev/null
 
               echo ""
-              wait_for_agent_ready "Weather Agent" "http://weather-agent:8004/health"
-              echo "Registering Boston Weather Agent..."
-              curl -fsS -X POST http://registry:6900/register \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "agent_id": "mbta-boston-weather-agent",
-                  "name": "MBTA Boston Weather Agent",
-                  "description": "Analyzes Boston-area weather impacts on MBTA transit (snow, ice, freezing rain, wind, flooding, heat, cold). Provides rider-facing commute risk guidance and operational risk context for subway, bus, commuter rail, and ferry.",
-                  "capabilities": ["weather", "commute_risk", "transit_weather", "boston_forecast", "service_risk"],
-                  "agent_url": "http://weather-agent:8004",
-                  "protocol": "a2a",
-                  "transport": "http"
-                }' >/dev/null
-              curl -fsS -X PUT http://registry:6900/agents/mbta-boston-weather-agent/status \
-                -H "Content-Type: application/json" \
-                -d '{"alive": true, "capabilities": ["weather", "commute_risk", "transit_weather", "boston_forecast", "service_risk"], "description": "Analyzes Boston-area weather impacts on MBTA transit (snow, ice, freezing rain, wind, flooding, heat, cold). Provides rider-facing commute risk guidance and operational risk context for subway, bus, commuter rail, and ferry."}' >/dev/null
-
-              echo ""
               echo "✅ All agents registered and marked alive!"
               curl -s http://registry:6900/list | head -100
 
@@ -155,11 +137,10 @@ spec:
 
                 if [ -n "$NEU_REGISTRY_REGISTER_URL" ]; then
                   echo "Mirroring to NEU registry at $NEU_REGISTRY_REGISTER_URL"
-                  for agent in mbta-alerts mbta-planner mbta-stopfinder mbta-boston-weather-agent; do
+                  for agent in mbta-alerts mbta-planner mbta-stopfinder; do
                     port="8001"
                     if [ "$agent" = "mbta-planner" ]; then port="8002"; fi
                     if [ "$agent" = "mbta-stopfinder" ]; then port="8003"; fi
-                    if [ "$agent" = "mbta-boston-weather-agent" ]; then port="8004"; fi
                     curl -s -X POST "$NEU_REGISTRY_REGISTER_URL" \
                       -H "Content-Type: application/json" \
                       -d "{\"agent_id\":\"$agent\",\"agent_url\":\"http://$agent:$port\"}" >/dev/null || true
@@ -168,7 +149,7 @@ spec:
 
                 if [ -n "$AGNTCY_REGISTER_WEBHOOK_URL" ]; then
                   echo "Mirroring to AGNTCY webhook at $AGNTCY_REGISTER_WEBHOOK_URL"
-                  for agent in mbta-alerts mbta-planner mbta-stopfinder mbta-boston-weather-agent; do
+                  for agent in mbta-alerts mbta-planner mbta-stopfinder; do
                     curl -s -X POST "$AGNTCY_REGISTER_WEBHOOK_URL" \
                       -H "Content-Type: application/json" \
                       -d "{\"source\":\"mbta-winter-2026\",\"agent_id\":\"$agent\"}" >/dev/null || true

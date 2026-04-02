@@ -105,11 +105,6 @@ build() {
       -t "${DOCKER_REGISTRY}/mbta-registry:${TAG}" \
       -f docker/Dockerfile.registry . --push
 
-    info "Building weather agent image (multi-arch)..."
-    docker buildx build --platform "${BUILD_PLATFORMS}" \
-      -t "${DOCKER_REGISTRY}/mbta-weather-agent:${TAG}" \
-      -f docker/Dockerfile.weather-agent . --push
-
     info "All images built and pushed successfully!"
   else
     info "Building exchange image..."
@@ -123,10 +118,6 @@ build() {
     info "Building registry image..."
     docker build -t "${DOCKER_REGISTRY}/mbta-registry:${TAG}" \
       -f docker/Dockerfile.registry .
-
-    info "Building weather agent image..."
-    docker build -t "${DOCKER_REGISTRY}/mbta-weather-agent:${TAG}" \
-      -f docker/Dockerfile.weather-agent .
 
     info "All images built successfully!"
   fi
@@ -145,7 +136,6 @@ push() {
   docker push "${DOCKER_REGISTRY}/mbta-exchange:${TAG}"
   docker push "${DOCKER_REGISTRY}/mbta-agent:${TAG}"
   docker push "${DOCKER_REGISTRY}/mbta-registry:${TAG}"
-  docker push "${DOCKER_REGISTRY}/mbta-weather-agent:${TAG}"
   info "All images pushed!"
 }
 
@@ -177,8 +167,7 @@ apply() {
   # Replace image placeholders in manifests with actual registry
   info "Substituting image registry in manifests..."
   for f in k8s/exchange.yaml k8s/frontend.yaml k8s/alerts-agent.yaml \
-           k8s/planner-agent.yaml k8s/stopfinder-agent.yaml k8s/weather-agent.yaml \
-           k8s/registry.yaml; do
+           k8s/planner-agent.yaml k8s/stopfinder-agent.yaml k8s/registry.yaml; do
     sed "s|\${DOCKER_REGISTRY}|${DOCKER_REGISTRY}|g" "${SCRIPT_DIR}/${f}" | kubectl apply -f -
   done
 
@@ -186,7 +175,6 @@ apply() {
   kubectl -n mbta wait --for=condition=ready pod -l app=alerts-agent --timeout=120s || true
   kubectl -n mbta wait --for=condition=ready pod -l app=planner-agent --timeout=120s || true
   kubectl -n mbta wait --for=condition=ready pod -l app=stopfinder-agent --timeout=120s || true
-  kubectl -n mbta wait --for=condition=ready pod -l app=weather-agent --timeout=120s || true
   kubectl -n mbta wait --for=condition=ready pod -l app=registry --timeout=120s || true
 
   # Register agents
@@ -211,7 +199,6 @@ destroy() {
   docker rmi "${DOCKER_REGISTRY}/mbta-exchange:${TAG}" >/dev/null 2>&1 || true
   docker rmi "${DOCKER_REGISTRY}/mbta-agent:${TAG}" >/dev/null 2>&1 || true
   docker rmi "${DOCKER_REGISTRY}/mbta-registry:${TAG}" >/dev/null 2>&1 || true
-  docker rmi "${DOCKER_REGISTRY}/mbta-weather-agent:${TAG}" >/dev/null 2>&1 || true
 
   if [[ "${USE_BUILDX}" == "true" ]]; then
     warn "Removing buildx builder (mbta-builder)..."
@@ -223,7 +210,7 @@ destroy() {
     if get_dockerhub_creds; then
       DOCKERHUB_NAMESPACE="${DOCKER_REGISTRY#docker.io/}"
       warn "Deleting remote images from Docker Hub (${DOCKERHUB_NAMESPACE})..."
-      for repo in mbta-exchange mbta-agent mbta-registry mbta-weather-agent; do
+      for repo in mbta-exchange mbta-agent mbta-registry; do
         curl -s -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
           -X DELETE "https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${repo}/tags/${TAG}/" \
           >/dev/null || true

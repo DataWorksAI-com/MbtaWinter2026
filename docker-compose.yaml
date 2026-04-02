@@ -12,7 +12,6 @@
 #   Jaeger UI:    http://localhost:16686
 #   Grafana:      http://localhost:3001
 #   Registry:     http://localhost:6900
-#   Weather A2A:  http://localhost:8004
 # ============================================================
 
 services:
@@ -48,7 +47,6 @@ services:
       - alerts-agent
       - planner-agent
       - stopfinder-agent
-      - weather-agent
       - registry
       - otel-collector
     networks:
@@ -174,26 +172,6 @@ services:
       - mbta-net
     volumes:
       - ./src:/app/src
-    restart: unless-stopped
-
-  # ─────────────────────────────────────────────
-  # Boston Weather Agent — HTTP A2A (separate repo image)
-  # ─────────────────────────────────────────────
-  weather-agent:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.weather-agent
-    container_name: mbta-weather-agent
-    ports:
-      - "8004:8004"
-    environment:
-      - REGISTRY_URL=http://registry:6900
-      - AGENT_PUBLIC_URL=http://weather-agent:8004
-      - WEATHER_API_KEY=${WEATHER_API_KEY:-}
-    depends_on:
-      - registry
-    networks:
-      - mbta-net
     restart: unless-stopped
 
   # ─────────────────────────────────────────────

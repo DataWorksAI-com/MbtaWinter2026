@@ -21,7 +21,6 @@ data:
   ALERTS_HTTP_URL: "http://alerts-agent:8001"
   PLANNER_HTTP_URL: "http://planner-agent:8002"
   STOPFINDER_HTTP_URL: "http://stopfinder-agent:8003"
-  WEATHER_AGENT_HTTP_URL: "http://weather-agent:8004"
 
   # Observability
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"

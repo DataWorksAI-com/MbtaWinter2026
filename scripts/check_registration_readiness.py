@@ -6,8 +6,7 @@ Usage:
     --registry-url http://localhost:6900 \
     --agent mbta-alerts=http://localhost:8001 \
     --agent mbta-planner=http://localhost:8002 \
-    --agent mbta-stopfinder=http://localhost:8003 \
-    --agent mbta-boston-weather-agent=http://localhost:8004
+    --agent mbta-stopfinder=http://localhost:8003
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ DEFAULT_AGENTS = {
     "mbta-alerts": "http://localhost:8001",
     "mbta-planner": "http://localhost:8002",
     "mbta-stopfinder": "http://localhost:8003",
-    "mbta-boston-weather-agent": "http://localhost:8004",
 }
 
 
