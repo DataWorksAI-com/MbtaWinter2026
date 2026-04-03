@@ -58,7 +58,7 @@ async def get_ui():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MBTA - Transit Intelligence</title>
+    <title>MBTA - Transit Conversational Intelligence</title>
     <style>
         * {
             margin: 0;
@@ -623,7 +623,7 @@ async def get_ui():
             <div class="messages-container" id="messagesContainer">
                 <div class="message system">
                     <div class="message-content">
-                        Welcome to MBTA Transit Intelligence! Ask about transit alerts, routes, or stations.
+                        Welcome to MBTA - Transit Conversational Intelligence! Ask about transit alerts, routes, or stations.
                     </div>
                 </div>
             </div>
