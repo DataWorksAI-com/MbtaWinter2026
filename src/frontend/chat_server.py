@@ -611,7 +611,7 @@ async def get_ui():
         <div class="chat-panel">
             <div class="chat-header">
                 <div class="header-left">
-                    <span>🚇MBTA - Transit Conversational Intelligence</span>
+                    <span>🚇 MBTA - Transit Conversational Intelligence</span>
                     <span class="weather-indicator" id="weatherIcon">☁️</span>
                 </div>
                 <div class="connection-status">
