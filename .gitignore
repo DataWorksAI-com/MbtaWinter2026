@@ -2,6 +2,9 @@
 *.enc.*.yaml
 secrets.yaml
 
+# Cluster credentials — never commit
+terraform/kubeconfig.yaml
+
 # Personal branch notes / blog drafts
 engineering_blog_entry_*.txt
 !blog/registration-readiness/

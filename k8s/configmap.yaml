@@ -35,7 +35,7 @@ data:
   LOG_LEVEL: "INFO"
 
   # Registry federation (switchboard mode)
-  ENABLE_FEDERATION: "false"
+  ENABLE_FEDERATION: "true"
   SWITCHBOARD_TIMEOUT_SECONDS: "5"
   AGNTCY_ADS_URL: ""
   AGNTCY_ADS_SEARCH_PATH: "/v1/search"
