@@ -1,0 +1,78 @@
+# ============================================================
+# NGINX Ingress: Public subdomain routing for MBTA agents
+#
+# Prerequisites:
+#   - nginx ingress controller installed in the mbta namespace
+#   - DNS A records pointing *.agent.mitdataworksai.com to the
+#     nginx LoadBalancer IP
+#
+# Apply:
+#   kubectl apply -f k8s/ingress.yaml
+#
+# Verify:
+#   kubectl -n mbta get ingress
+#   curl https://stopfinder.agent.mitdataworksai.com/health
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mbta-agents-ingress
+  namespace: mbta
+  labels:
+    app.kubernetes.io/part-of: mbta-winter-2026
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: nginx
+  rules:
+    # StopFinder Agent — registered in external MIT-NANDA registry
+    # Public endpoint required for federated discovery demo
+    - host: stopfinder.agent.mitdataworksai.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: stopfinder-agent
+                port:
+                  number: 8003
+
+    # Alerts Agent
+    - host: alerts.agent.mitdataworksai.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: alerts-agent
+                port:
+                  number: 8001
+
+    # Planner Agent — registered in internal AGNTCY ADS via gRPC
+    # Public endpoint required for federated discovery demo
+    - host: planner.agent.mitdataworksai.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: planner-agent
+                port:
+                  number: 8002
+
+    # Frontend Chat UI
+    - host: mbta.mitdataworksai.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

@@ -31,6 +31,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - MBTA_API_KEY=${MBTA_API_KEY}
       - USE_SLIM=true
+      - USE_SWITCHBOARD=${USE_SWITCHBOARD:-false}
       - REGISTRY_URL=http://registry:6900
       - ALERTS_AGENT_URL=http://alerts-agent:50051
       - WATCHFILES_FORCE_POLLING=true
@@ -199,6 +200,10 @@ services:
       - MONGO_URI=mongodb://mongodb:27017
       - MONGODB_DB=nanda_private_registry
       - FLASK_DEBUG=1
+      - ENABLE_FEDERATION=${ENABLE_FEDERATION:-false}
+      - MIT_NANDA_URL=${MIT_NANDA_URL:-}
+      - NEU_REGISTRY_URL=${NEU_REGISTRY_URL:-http://97.107.132.213}
+      - AGNTCY_ADS_GRPC_ADDRESS=${AGNTCY_ADS_GRPC_ADDRESS:-}
     depends_on:
       - mongodb
     networks:

@@ -5,7 +5,7 @@ Version: 4.4 - Domain Expert Coordination
 """
 
 import os
-from typing import TypedDict, Annotated, Sequence, Literal, Dict, List, Any
+from typing import TypedDict, Annotated, Sequence, Literal, Dict, List, Any, Optional
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 import operator
@@ -34,11 +34,15 @@ logger = logging.getLogger(__name__)
 # Configuration
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:6900")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+USE_SWITCHBOARD = os.getenv("USE_SWITCHBOARD", "false").lower() in ("1", "true", "yes", "on")
 
 # Caching
 _agent_catalog_cache = None
 _catalog_cache_time = None
 _catalog_cache_ttl = timedelta(minutes=5)
+_switchboard_cache = None
+_switchboard_cache_time = None
+_switchboard_cache_ttl = timedelta(minutes=2)
 _current_orchestrator = None
 
 
@@ -52,6 +56,7 @@ class AgentState(TypedDict):
     intent: str
     confidence: float
     matched_agents: List[str]
+    discovered_agent_configs: List[Dict[str, Any]]
     agent_queries: Dict[str, str]
     llm_matching_decision: Dict[str, Any]
     messages: Annotated[Sequence[BaseMessage], operator.add]
@@ -105,10 +110,10 @@ def extract_origin_destination(query: str) -> Dict[str, str]:
         return result
     
     # Pattern 2: "route from X to Y" or "from X to Y"
-    match = re.search(r"(?:route |get )?from (.+?) to (.+?)(?:\s+in time|\s+for|\s+\.|$)", q)
+    match = re.search(r"(?:route |get )?from (.+?) to (.+?)(?:\s+in time|\s+for|[,.]|$)", q)
     if match:
-        result["origin"] = match.group(1).strip()
-        result["destination"] = match.group(2).strip()
+        result["origin"] = match.group(1).strip().rstrip(".,")
+        result["destination"] = match.group(2).strip().rstrip(".,")
         logger.info(f"✓ PARSED (pattern 2): origin='{result['origin']}', dest='{result['destination']}'")
         return result
     
@@ -270,6 +275,7 @@ async def validate_registry() -> bool:
 
 
 async def get_agent_catalog() -> List[Dict]:
+    """Legacy single-registry catalog load. Used as fallback when switchboard is off."""
     global _agent_catalog_cache, _catalog_cache_time
     
     if _agent_catalog_cache and _catalog_cache_time:
@@ -305,12 +311,109 @@ async def get_agent_catalog() -> List[Dict]:
         return []
 
 
+# ============================================================================
+# SWITCHBOARD DISCOVERY
+# ============================================================================
+
+def _infer_capabilities(query: str) -> List[str]:
+    """Derive capability hints from a user query for switchboard filtering."""
+    q = query.lower()
+    caps: List[str] = []
+
+    if any(w in q for w in ["route", "plan", "trip", "get from", "get to", "directions", "how do i get"]):
+        caps.extend(["routing", "alerts", "stops"])
+    else:
+        if any(w in q for w in ["alert", "delay", "disruption", "wait", "crowding", "status"]):
+            caps.append("alerts")
+        if any(w in q for w in ["stop", "station", "find", "where is", "nearest"]):
+            caps.append("stops")
+
+    return caps
+
+
+async def get_switchboard_candidates(capabilities: Optional[List[str]] = None) -> List[Dict]:
+    """Query the Switchboard /discover endpoint for federated candidates."""
+    global _switchboard_cache, _switchboard_cache_time
+
+    cache_key = ",".join(sorted(capabilities)) if capabilities else "__all__"
+
+    if _switchboard_cache and _switchboard_cache_time:
+        if datetime.now() - _switchboard_cache_time < _switchboard_cache_ttl:
+            cached = _switchboard_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+    import urllib.request as _ur, asyncio as _aio, json as _json
+    from urllib.parse import urlencode as _ue
+
+    params: Dict[str, str] = {}
+    if capabilities:
+        params["capabilities"] = ",".join(capabilities)
+
+    qs = f"?{_ue(params)}" if params else ""
+    url = f"{REGISTRY_URL}/switchboard/discover{qs}"
+
+    try:
+        raw = await _aio.to_thread(
+            lambda: _json.loads(_ur.urlopen(url, timeout=10).read())
+        )
+        candidates = raw.get("candidates", [])
+        registries = raw.get("registries_queried", [])
+        logger.info(f"✓ Switchboard: {len(candidates)} candidates from {registries}")
+
+        if _switchboard_cache is None:
+            _switchboard_cache = {}
+        _switchboard_cache[cache_key] = candidates
+        _switchboard_cache_time = datetime.now()
+        return candidates
+    except Exception as e:
+        logger.error(f"Switchboard error: {e}, falling back to local catalog")
+        return await get_agent_catalog()
+
+
+def _normalize_agent_id(agent: Dict) -> str:
+    """Return the canonical local agent_id regardless of federation prefix or skill- prefix."""
+    aid = agent.get("agent_id", "")
+    # Strip federation prefixes like @mit: @neu: @agntcy:
+    if aid.startswith("@") and ":" in aid:
+        aid = aid.split(":", 1)[1]
+    # MIT NANDA prefixes agent names with "skill-" (e.g. skill-mbta-stopfinder -> mbta-stopfinder)
+    if aid.startswith("skill-"):
+        aid = aid[len("skill-"):]
+    return aid
+
+
+def _deduplicate_candidates(candidates: List[Dict]) -> List[Dict]:
+    """Keep the best record per logical agent.
+
+    Priority reflects the target demo topology:
+      mit (stopfinder) > agntcy (planner) > nanda (local) > neu
+    """
+    priority = {"mit": 0, "agntcy": 1, "nanda": 2, "neu": 3}
+    best: Dict[str, Dict] = {}
+    for c in candidates:
+        canonical = _normalize_agent_id(c)
+        source = c.get("source_registry", "nanda")
+        existing = best.get(canonical)
+        if existing is None or priority.get(source, 99) < priority.get(existing.get("source_registry", "nanda"), 99):
+            best[canonical] = c
+    return list(best.values())
+
+
 async def semantic_discovery(query: str) -> List[AgentConfig]:
-    catalog = await get_agent_catalog()
-    if not catalog:
+    """Discover agents for a query. Uses Switchboard when enabled, else legacy catalog."""
+    if USE_SWITCHBOARD:
+        caps = _infer_capabilities(query)
+        candidates = await get_switchboard_candidates(caps if caps else None)
+        candidates = _deduplicate_candidates(candidates)
+        logger.info(f"✓ Switchboard discovery: {len(candidates)} candidates (caps={caps})")
+    else:
+        candidates = await get_agent_catalog()
+
+    if not candidates:
         return []
     
-    descriptions = [f"• {a['agent_id']}: {a['description']}" for a in catalog]
+    descriptions = [f"• {a.get('agent_id', 'unknown')}: {a.get('description', '')}" for a in candidates]
     catalog_text = "\n".join(descriptions)
     
     prompt = f"""Match query to the most relevant agents based on what the user actually needs.
@@ -363,18 +466,22 @@ Return JSON with ONLY the agents truly needed: {{"matched_agents": ["id1", "id2"
         
         configs = []
         for aid in matched_ids:
-            ainfo = next((a for a in catalog if a['agent_id'] == aid), None)
+            # Match by exact ID or by canonical name (handles @neu:X, @agntcy:X)
+            ainfo = next((a for a in candidates if a.get('agent_id') == aid), None)
+            if ainfo is None:
+                ainfo = next((a for a in candidates if _normalize_agent_id(a) == aid), None)
             if ainfo:
-                p = urlparse(ainfo['agent_url'])
+                p = urlparse(ainfo.get('agent_url', ''))
                 configs.append(AgentConfig(
-                    name=ainfo['agent_id'],
-                    url=f"{p.scheme or 'http'}://{p.hostname}",
-                    port=p.port or 80,
-                    description=ainfo['description'],
+                    name=ainfo.get('agent_id', aid),
+                    url=f"{p.scheme or 'http'}://{p.hostname}" if p.hostname else "",
+                    port=p.port or (443 if p.scheme == 'https' else 80),
+                    description=ainfo.get('description', ''),
                     capabilities=ainfo.get('capabilities', [])
                 ))
         
-        logger.info(f"✓ Discovery: {matched_ids}")
+        source_label = "switchboard" if USE_SWITCHBOARD else "registry"
+        logger.info(f"✓ Discovery ({source_label}): {matched_ids}")
         return configs
     except:
         return []
@@ -408,7 +515,7 @@ async def call_agent_http(config: AgentConfig, msg: str, conv_id: str) -> Dict:
         "metadata": {"source": "stategraph"}
     }
     
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
         r = await client.post(url, json=payload)
         r.raise_for_status()
         result = r.json()
@@ -456,7 +563,12 @@ async def discovery_node(state: AgentState) -> AgentState:
     with tracer.start_as_current_span("discovery"):
         matched = await semantic_discovery(state["user_message"])
         matched_ids = [a.name for a in matched]
-        
+        discovered_configs = [
+            {"agent_id": c.name, "agent_url": f"{c.url}:{c.port}" if c.port not in (80, 443, None) else c.url,
+             "description": c.description, "capabilities": c.capabilities}
+            for c in matched
+        ]
+
         # Infer intent
         intent = "general"
         conf = 0.5
@@ -478,6 +590,7 @@ async def discovery_node(state: AgentState) -> AgentState:
         return {
             **state,
             "matched_agents": matched_ids,
+            "discovered_agent_configs": discovered_configs,
             "intent": intent,
             "confidence": conf,
             "origin_text": parsed["origin"],
@@ -543,7 +656,7 @@ async def execute_agents_node(state: AgentState) -> AgentState:
             return {**state, "agents_called": [], "agent_responses": []}
         
         global _current_orchestrator
-        catalog = await get_agent_catalog()
+        catalog = state.get("discovered_agent_configs") or await get_agent_catalog()
         
         responses = []
         agents_called = []
@@ -579,7 +692,7 @@ async def execute_agents_node(state: AgentState) -> AgentState:
                 sf_config = AgentConfig(
                     name=ainfo['agent_id'],
                     url=f"{p.scheme or 'http'}://{p.hostname}",
-                    port=p.port or 80,
+                    port=p.port or (443 if p.scheme == 'https' else 80),
                     description=ainfo['description'],
                     capabilities=ainfo.get('capabilities', [])
                 )
@@ -624,25 +737,27 @@ async def execute_agents_node(state: AgentState) -> AgentState:
             if agent_id == stopfinder_id:
                 continue
             
-            ainfo = next((a for a in catalog if a['agent_id'] == agent_id), None)
+            canonical_id = _normalize_agent_id({"agent_id": agent_id})
+            ainfo = next((a for a in catalog if a['agent_id'] == agent_id or _normalize_agent_id(a) == canonical_id), None)
             if not ainfo:
                 continue
+            agent_id = ainfo['agent_id']  # use the full federation ID from catalog
             
             p = urlparse(ainfo['agent_url'])
             config = AgentConfig(
                 name=ainfo['agent_id'],
                 url=f"{p.scheme or 'http'}://{p.hostname}",
-                port=p.port or 80,
+                port=p.port or (443 if p.scheme == 'https' else 80),
                 description=ainfo['description'],
                 capabilities=ainfo.get('capabilities', [])
             )
             
             # Construct query
-            if agent_id == "mbta-alerts":
+            if canonical_id == "mbta-alerts":
                 agent_query = state["user_message"]  # Pass full query for context
                 logger.info(f"⚠️ Alerts Agent")
-            
-            elif agent_id in ["mbta-planner", "mbta-route-planner"]:
+
+            elif canonical_id in ["mbta-planner", "mbta-route-planner"]:
                 # Planner: Use RESOLVED station names + alerts context
                 from_station = resolved_origin if resolved_origin else origin
                 to_station = resolved_destination if resolved_destination else destination
@@ -723,7 +838,7 @@ Plan the route between these stations."""
                     resp_text = result.get("response", "")
                     
                     # NEW: Extract domain analysis from Alerts Agent
-                    if agent_id == "mbta-alerts":
+                    if canonical_id == "mbta-alerts":
                         # Extract domain expertise insights
                         alerts_analysis = extract_alerts_domain_analysis(resp_text)
                         
@@ -918,22 +1033,26 @@ def build_graph() -> StateGraph:
 
 class StateGraphOrchestrator:
     """
-    Production Orchestrator v4.4 - Domain Expertise Coordination
+    Production Orchestrator v4.5 - Switchboard Federation
+    - Switchboard-backed federated discovery across registries
+    - Capability-based candidate narrowing before LLM selection
     - Skips StopFinder for known stations
     - Extracts domain analysis from Alerts Agent
     - Passes alerts context to Planner Agent
-    - Enables collaborative domain expertise
     """
     
     def __init__(self):
         global _current_orchestrator
         
         logger.info("=" * 80)
-        logger.info("🚀 StateGraph Orchestrator v4.4 - Domain Expert Coordination")
+        logger.info("🚀 StateGraph Orchestrator v4.5 - Switchboard Federation")
         logger.info("   ✅ Smart StopFinder skipping")
         logger.info("   ✅ Domain analysis extraction")
         logger.info("   ✅ Context passing between agents")
-        logger.info("   ✅ Registry discovery")
+        if USE_SWITCHBOARD:
+            logger.info("   ✅ Switchboard federated discovery")
+        else:
+            logger.info("   ⚠️  Legacy single-registry discovery")
         logger.info("   ✅ SLIM transport")
         logger.info("=" * 80)
         
@@ -950,17 +1069,24 @@ class StateGraphOrchestrator:
                 self.use_slim = False
         
         _current_orchestrator = self
-        logger.info("✅ Orchestrator v4.4 ready")
+        logger.info("✅ Orchestrator v4.5 ready")
     
     async def startup_validation(self):
-        """Validate registry connection"""
+        """Validate registry and switchboard connectivity"""
         logger.info("🔍 Validating...")
         
         if not await validate_registry():
             raise RuntimeError("Registry not accessible")
         
-        agents = await get_agent_catalog()
-        logger.info(f"📚 {len(agents)} agents")
+        if USE_SWITCHBOARD:
+            try:
+                candidates = await get_switchboard_candidates()
+                logger.info(f"📚 Switchboard: {len(candidates)} candidates across federated registries")
+            except Exception as e:
+                logger.warning(f"⚠️ Switchboard validation failed: {e}, will retry at query time")
+        else:
+            agents = await get_agent_catalog()
+            logger.info(f"📚 {len(agents)} agents (legacy catalog)")
         
         if self.use_slim and self.slim_client:
             try:

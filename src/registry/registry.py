@@ -35,7 +35,20 @@ SWITCHBOARD_TIMEOUT_SECONDS = float(os.getenv("SWITCHBOARD_TIMEOUT_SECONDS", "5"
 AGNTCY_ADS_URL = (os.getenv("AGNTCY_ADS_URL") or "").rstrip("/")
 AGNTCY_ADS_SEARCH_PATH = os.getenv("AGNTCY_ADS_SEARCH_PATH", "/v1/search")
 AGNTCY_ADS_TOKEN = (os.getenv("AGNTCY_ADS_TOKEN") or "").strip()
+AGNTCY_ADS_GRPC_ADDRESS = (os.getenv("AGNTCY_ADS_GRPC_ADDRESS") or "").strip()
 NEU_REGISTRY_URL = (os.getenv("NEU_REGISTRY_URL") or "").rstrip("/")
+MIT_NANDA_URL = (os.getenv("MIT_NANDA_URL") or "").rstrip("/")
+
+# Try importing the official AGNTCY DIR SDK for gRPC-native lookups.
+# Falls back to the legacy HTTP adapter when the SDK is not installed.
+try:
+    from agntcy.dir_sdk.client import Client as _DirClient, Config as _DirConfig
+    from agntcy.dir_sdk.models import search_v1 as _search_v1
+    from agntcy.dir_sdk.models import core_v1 as _core_v1
+    from agntcy.dir_sdk.models import routing_v1 as _routing_v1
+    _AGNTCY_SDK_AVAILABLE = True
+except Exception:
+    _AGNTCY_SDK_AVAILABLE = False
 
 ENABLE_EXTERNAL_REGISTRATION = _env_bool("ENABLE_EXTERNAL_REGISTRATION", default=False)
 NEU_REGISTRY_REGISTER_URL = (os.getenv("NEU_REGISTRY_REGISTER_URL") or "").rstrip("/")
@@ -228,11 +241,26 @@ def _translate_agntcy_record(raw: Dict[str, Any], agent_name: str) -> Dict[str, 
         if isinstance(name, str) and name:
             capabilities.append(name.split("/")[-1])
 
+    # Fallback: infer transit capabilities from description when OASF skills are generic
+    # (e.g. agent registered with taxonomy like problem_solving, image_segmentation)
+    _transit_caps = {"route", "routing", "plan", "alert", "stop", "station", "trip", "transit"}
+    if not any(kw in c.lower() for c in capabilities for kw in _transit_caps):
+        desc_lower = raw.get("description", "").lower()
+        if any(w in desc_lower for w in ["route", "routing", "plan", "trip", "direction"]):
+            capabilities.extend(["routing", "trip-planning"])
+        if any(w in desc_lower for w in ["alert", "delay", "disruption", "service"]):
+            capabilities.extend(["alerts", "service-status"])
+        if any(w in desc_lower for w in ["stop", "station", "location"]):
+            capabilities.extend(["stops", "stations"])
+
     agent_url = ""
     locators = raw.get("locators") or []
     if isinstance(locators, list):
         for locator in locators:
             if not isinstance(locator, dict):
+                continue
+            # Skip source code refs — not callable agent endpoints
+            if locator.get("type") == "source_code":
                 continue
             maybe_url = locator.get("url")
             if isinstance(maybe_url, str) and maybe_url:
@@ -283,7 +311,132 @@ def _query_neu(agent_name: str) -> Optional[Dict[str, Any]]:
     return payload
 
 
+def _list_mit_nanda() -> List[Dict[str, Any]]:
+    """Fetch MBTA agents from MIT NANDA and return as unified candidates.
+
+    The MIT NANDA /api/agents list does not surface agents registered via the
+    individual endpoint (different backing collection). We therefore look up
+    known MBTA agent IDs directly first, then scan the catalog list for any
+    additional MBTA agents added later.
+    """
+    if not MIT_NANDA_URL:
+        return []
+
+    # Known MIT NANDA agent IDs — direct lookup bypasses catalog pagination gap.
+    _MIT_NANDA_KNOWN_IDS = ["skill-mbta-stopfinder"]
+
+    seen_ids: set = set()
+    candidates = []
+
+    def _build_from_record(record: Dict[str, Any], source_id: str) -> Dict[str, Any]:
+        return {
+            "agent_id": f"@mit:{source_id}",
+            "agent_name": source_id,
+            "agent_url": record.get("endpoint", ""),
+            "description": record.get("description", ""),
+            "capabilities": record.get("specialties", []),
+            "tags": [],
+            "alive": record.get("status") == "online",
+            "schema_version": "nanda-v1",
+            "source_schema": "nanda",
+            "source_registry": "mit",
+        }
+
+    # Direct lookup for known agents (reliable even when absent from catalog list)
+    for known_id in _MIT_NANDA_KNOWN_IDS:
+        record = _http_json(f"{MIT_NANDA_URL}/api/agents/{quote(known_id, safe='')}")
+        if record:
+            source_id = record.get("agent_id") or known_id
+            candidates.append(_build_from_record(record, source_id))
+            seen_ids.add(source_id)
+
+    # Also scan catalog list to pick up any additional MBTA agents registered later
+    result = _http_json(f"{MIT_NANDA_URL}/api/agents")
+    for agent in (result or {}).get("agents", []):
+        raw_id = agent.get("id") or ""
+        source_id = raw_id[len("skill-"):] if raw_id.startswith("skill-skill-") else raw_id
+        if "mbta" not in source_id.lower() or source_id in seen_ids:
+            continue
+        individual = _http_json(f"{MIT_NANDA_URL}/api/agents/{quote(source_id, safe='')}")
+        record = individual if individual else agent
+        candidates.append(_build_from_record(record, source_id))
+        seen_ids.add(source_id)
+
+    return candidates
+
+
+def _query_agntcy_grpc(agent_name: str) -> Optional[Dict[str, Any]]:
+    """Query AGNTCY ADS via the official gRPC SDK."""
+    if not AGNTCY_ADS_GRPC_ADDRESS or not _AGNTCY_SDK_AVAILABLE:
+        return None
+
+    try:
+        config = _DirConfig(server_address=AGNTCY_ADS_GRPC_ADDRESS)
+        client = _DirClient(config)
+
+        query = _search_v1.RecordQuery(
+            type=_search_v1.RECORD_QUERY_TYPE_NAME,
+            value=agent_name,
+        )
+        search_request = _search_v1.SearchCIDsRequest(queries=[query], limit=5)
+        refs = list(client.search_cids(search_request))
+        if not refs:
+            return None
+
+        records = list(client.pull(refs[:1]))
+        if not records:
+            return None
+
+        from google.protobuf.json_format import MessageToDict
+        raw = MessageToDict(records[0])
+        data = raw.get("data", raw)
+        return _translate_agntcy_record(data, agent_name)
+
+    except Exception as e:
+        print(f"⚠️  AGNTCY gRPC error for '{agent_name}': {e}")
+        return None
+
+
+def _register_agntcy_grpc(agent_id: str, agent_url: str, description: str, capabilities: List[str]) -> bool:
+    """Register an agent into the internal NEU ADS via the official gRPC DIR SDK."""
+    if not AGNTCY_ADS_GRPC_ADDRESS or not _AGNTCY_SDK_AVAILABLE:
+        return False
+
+    try:
+        config = _DirConfig(server_address=AGNTCY_ADS_GRPC_ADDRESS)
+        client = _DirClient(config)
+
+        payload = json.dumps({
+            "agent_id": agent_id,
+            "agent_url": agent_url,
+            "description": description,
+            "capabilities": capabilities,
+            "source": "mbta-winter-2026",
+        }).encode("utf-8")
+
+        record = _core_v1.Record(data=payload)
+        refs = client.push([record])
+        if not refs:
+            print(f"⚠️  AGNTCY gRPC push returned no refs for '{agent_id}'")
+            return False
+
+        client.publish(_routing_v1.PublishRequest(cids=[refs[0].cid]))
+        print(f"✅ Registered '{agent_id}' in NEU ADS via gRPC")
+        return True
+
+    except Exception as e:
+        print(f"⚠️  AGNTCY gRPC registration error for '{agent_id}': {e}")
+        return False
+
+
 def _query_agntcy(agent_name: str) -> Optional[Dict[str, Any]]:
+    # Prefer gRPC SDK when address is configured and SDK is available.
+    if AGNTCY_ADS_GRPC_ADDRESS and _AGNTCY_SDK_AVAILABLE:
+        result = _query_agntcy_grpc(agent_name)
+        if result is not None:
+            return result
+        # Fall through to legacy HTTP if gRPC fails
+
     if not AGNTCY_ADS_URL:
         return None
 
@@ -348,13 +501,14 @@ def _switchboard_registry_status() -> Dict[str, Any]:
         }
     ]
 
-    if AGNTCY_ADS_URL:
+    if AGNTCY_ADS_GRPC_ADDRESS or AGNTCY_ADS_URL:
         registries.append(
             {
                 "registry_id": "agntcy",
                 "status": "active" if ENABLE_FEDERATION else "configured",
-                "server_address": AGNTCY_ADS_URL,
-                "sdk_available": False,
+                "grpc_address": AGNTCY_ADS_GRPC_ADDRESS or None,
+                "http_url": AGNTCY_ADS_URL or None,
+                "sdk_available": _AGNTCY_SDK_AVAILABLE,
             }
         )
 
@@ -436,51 +590,71 @@ def _diagnose_neu(sample_agent: str) -> Dict[str, Any]:
 
 def _diagnose_agntcy(sample_agent: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
-        "configured": bool(AGNTCY_ADS_URL),
-        "server_address": AGNTCY_ADS_URL,
+        "configured": bool(AGNTCY_ADS_GRPC_ADDRESS) or bool(AGNTCY_ADS_URL),
+        "grpc_address": AGNTCY_ADS_GRPC_ADDRESS,
+        "grpc_sdk_available": _AGNTCY_SDK_AVAILABLE,
+        "http_url": AGNTCY_ADS_URL,
         "search_path": AGNTCY_ADS_SEARCH_PATH,
         "state": "not_configured",
     }
-    if not AGNTCY_ADS_URL:
+    if not AGNTCY_ADS_GRPC_ADDRESS and not AGNTCY_ADS_URL:
         return out
 
-    headers: Dict[str, str] = {}
-    if AGNTCY_ADS_TOKEN:
-        headers["Authorization"] = f"Bearer {AGNTCY_ADS_TOKEN}"
+    # Try gRPC path first
+    if AGNTCY_ADS_GRPC_ADDRESS and _AGNTCY_SDK_AVAILABLE:
+        out["sample_agent"] = sample_agent
+        grpc_result = _query_agntcy_grpc(sample_agent)
+        if grpc_result is not None:
+            out["state"] = "reachable_found"
+            out["adapter"] = "grpc"
+            return out
+        else:
+            out["grpc_probe"] = "no_result_or_error"
 
-    query = urlencode({"name": sample_agent})
-    url = f"{AGNTCY_ADS_URL}{AGNTCY_ADS_SEARCH_PATH}?{query}"
-    probe = _http_probe_json(url, headers=headers)
-    out["sample_agent"] = sample_agent
-    out["sample_probe"] = {
-        "status_code": probe.get("status_code"),
-        "error": probe.get("error"),
-    }
+    # Fall back to HTTP probe
+    if AGNTCY_ADS_URL:
+        headers: Dict[str, str] = {}
+        if AGNTCY_ADS_TOKEN:
+            headers["Authorization"] = f"Bearer {AGNTCY_ADS_TOKEN}"
 
-    if not probe.get("ok"):
-        out["state"] = "upstream_unavailable"
-        return out
+        query = urlencode({"name": sample_agent})
+        url = f"{AGNTCY_ADS_URL}{AGNTCY_ADS_SEARCH_PATH}?{query}"
+        probe = _http_probe_json(url, headers=headers)
+        out["sample_agent"] = sample_agent
+        out["sample_probe"] = {
+            "status_code": probe.get("status_code"),
+            "error": probe.get("error"),
+        }
 
-    data = probe.get("data")
-    candidates = _agntcy_candidates_from_data(data)
-    out["sample_probe"]["candidate_count"] = len(candidates)
+        if not probe.get("ok"):
+            out["state"] = "upstream_unavailable"
+            return out
 
-    if candidates:
-        for candidate in candidates:
-            name = str(candidate.get("name", "")).strip()
-            if name == sample_agent or name.endswith(sample_agent):
-                out["state"] = "reachable_found"
-                return out
-        out["state"] = "reachable_empty_result"
-        return out
+        data = probe.get("data")
+        candidates = _agntcy_candidates_from_data(data)
+        out["sample_probe"]["candidate_count"] = len(candidates)
 
-    if isinstance(data, dict):
-        known_shape = any(k in data for k in ("records", "results", "items", "agents", "record", "name"))
-        out["state"] = "reachable_empty_result" if known_shape else "reachable_schema_mismatch"
-        out["sample_probe"]["top_level_keys"] = list(data.keys())[:20]
-        return out
+        if candidates:
+            for candidate in candidates:
+                name = str(candidate.get("name", "")).strip()
+                if name == sample_agent or name.endswith(sample_agent):
+                    out["state"] = "reachable_found"
+                    out["adapter"] = "http"
+                    return out
+            out["state"] = "reachable_empty_result"
+            return out
 
-    out["state"] = "reachable_schema_mismatch"
+        if isinstance(data, dict):
+            known_shape = any(k in data for k in ("records", "results", "items", "agents", "record", "name"))
+            out["state"] = "reachable_empty_result" if known_shape else "reachable_schema_mismatch"
+            out["sample_probe"]["top_level_keys"] = list(data.keys())[:20]
+            return out
+
+    # gRPC configured but no HTTP fallback and gRPC didn't return a result
+    if AGNTCY_ADS_GRPC_ADDRESS:
+        out["state"] = "grpc_configured_no_result"
+    else:
+        out["state"] = "reachable_schema_mismatch"
     return out
 
 
@@ -527,6 +701,15 @@ def _mirror_external_registration(agent_payload: Dict[str, Any]) -> Dict[str, An
         }
         ok = _http_json(AGNTCY_REGISTER_WEBHOOK_URL, method="POST", payload=agntcy_body) is not None
         result["targets"].append({"registry": "agntcy", "ok": ok})
+
+    if AGNTCY_ADS_GRPC_ADDRESS and _AGNTCY_SDK_AVAILABLE:
+        ok = _register_agntcy_grpc(
+            agent_id=agent_id,
+            agent_url=agent_payload.get("agent_url", ""),
+            description=agent_payload.get("description", ""),
+            capabilities=agent_payload.get("capabilities", []),
+        )
+        result["targets"].append({"registry": "agntcy_grpc", "ok": ok})
 
     result["mirrored"] = any(t["ok"] for t in result["targets"])
     return result
@@ -575,7 +758,7 @@ def health():
             "mongo": USE_MONGO and not TEST_MODE,
             "federation_enabled": ENABLE_FEDERATION,
             "federation_targets": {
-                "agntcy": bool(AGNTCY_ADS_URL),
+                "agntcy": bool(AGNTCY_ADS_URL or AGNTCY_ADS_GRPC_ADDRESS),
                 "neu": bool(NEU_REGISTRY_URL),
             },
             "timestamp": datetime.now().isoformat(),
@@ -787,6 +970,117 @@ def switchboard_lookup(identifier):
     if payload is None:
         return jsonify({"error": f"ID '{identifier}' not found in federated registries"}), 404
     return jsonify(payload)
+
+
+@app.route("/switchboard/discover", methods=["GET"])
+def switchboard_discover():
+    """Federated discovery across all configured registries.
+
+    Query parameters:
+      capabilities - comma-separated capability filter (optional)
+      tags         - comma-separated tag filter (optional)
+      q            - text substring filter on agent_id/description (optional)
+
+    Returns a unified list of agent payloads from every reachable registry,
+    each annotated with ``source_registry``.  When federation is disabled the
+    response still includes local agents so callers always get a result.
+    """
+    capabilities_filter = request.args.get("capabilities", "").strip()
+    tags_filter = request.args.get("tags", "").strip()
+    query_filter = request.args.get("q", "").strip().lower()
+
+    cap_list = [c.strip() for c in capabilities_filter.split(",") if c.strip()] if capabilities_filter else []
+    tag_list = [t.strip() for t in tags_filter.split(",") if t.strip()] if tags_filter else []
+
+    candidates: List[Dict[str, Any]] = []
+
+    # --- Local NANDA agents ---
+    for agent_id in registry.keys():
+        if agent_id == "agent_status":
+            continue
+        payload = _build_agent_payload(agent_id)
+        payload["source_registry"] = "nanda"
+        candidates.append(payload)
+
+    # --- Federated registries (only when federation is enabled) ---
+    if ENABLE_FEDERATION:
+        # MIT NANDA — full list discovery (does not require local seed names)
+        if MIT_NANDA_URL:
+            try:
+                candidates.extend(_list_mit_nanda())
+            except Exception:
+                pass
+
+        # Known agent names to probe in external registries.
+        # Use local agent IDs as seed names so we can find the same logical
+        # agents registered elsewhere.
+        _KNOWN_AGENTS = ["mbta-planner", "mbta-alerts", "mbta-stopfinder"]
+        seed_names = list({aid for aid in registry.keys() if aid != "agent_status"} | set(_KNOWN_AGENTS))
+
+        for name in seed_names:
+            if NEU_REGISTRY_URL:
+                try:
+                    neu_result = _query_neu(name)
+                    if neu_result is not None:
+                        neu_result.setdefault("source_registry", "neu")
+                        candidates.append(neu_result)
+                except Exception:
+                    pass
+
+            if AGNTCY_ADS_GRPC_ADDRESS or AGNTCY_ADS_URL:
+                try:
+                    agntcy_result = _query_agntcy(name)
+                    if agntcy_result is not None:
+                        agntcy_result.setdefault("source_registry", "agntcy")
+                        candidates.append(agntcy_result)
+                except Exception:
+                    pass
+
+
+    # --- Apply filters ---
+    filtered: List[Dict[str, Any]] = []
+    for agent in candidates:
+        # Skip records with no callable endpoint
+        if not agent.get("agent_url"):
+            continue
+
+        if query_filter:
+            aid = (agent.get("agent_id") or "").lower()
+            desc = (agent.get("description") or "").lower()
+            if query_filter not in aid and query_filter not in desc:
+                continue
+
+        if cap_list:
+            agent_caps = agent.get("capabilities") or []
+            # Use substring matching so "stops" matches "mbta-stops", "stop-lookup" etc.
+            if not any(hint in cap for hint in cap_list for cap in agent_caps):
+                continue
+
+        if tag_list:
+            agent_tags = agent.get("tags") or []
+            if not any(t in agent_tags for t in tag_list):
+                continue
+
+        filtered.append(agent)
+
+    return jsonify({
+        "candidates": filtered,
+        "total": len(filtered),
+        "federation_enabled": ENABLE_FEDERATION,
+        "registries_queried": _registries_queried_list(),
+    })
+
+
+def _registries_queried_list() -> List[str]:
+    """Return the list of registry IDs that were actually queried."""
+    queried = ["nanda"]
+    if ENABLE_FEDERATION and NEU_REGISTRY_URL:
+        queried.append("neu")
+    if ENABLE_FEDERATION and (AGNTCY_ADS_URL or AGNTCY_ADS_GRPC_ADDRESS):
+        queried.append("agntcy")
+    if ENABLE_FEDERATION and MIT_NANDA_URL:
+        queried.append("mit")
+    return queried
 
 
 @app.route("/switchboard/diagnostics", methods=["GET"])
