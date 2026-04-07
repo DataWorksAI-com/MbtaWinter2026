@@ -39,15 +39,19 @@ data:
   #   - external MIT-NANDA -> mbta-stopfinder
   #   - internal Northeastern NANDA -> mbta-alerts
   #   - internal AGNTCY ADS -> mbta-planner
-  ENABLE_FEDERATION: "false"
+  ENABLE_FEDERATION: "true"
   SWITCHBOARD_TIMEOUT_SECONDS: "5"
-  # Official AGNTCY DIR/ADS exposes gRPC on port 8888. The current MBTA
-  # registry adapter still uses a legacy HTTP lookup path, so this setting is
-  # deployment-ready but will only become functional once the adapter is updated.
+  USE_SWITCHBOARD: "true"
+  MIT_NANDA_URL: "https://nest.projectnanda.org"
+  # Northeastern NANDA registry (HTTP).
+  NEU_REGISTRY_URL: "http://97.107.132.213"
+  # AGNTCY ADS gRPC server address (host:port, no scheme).
+  AGNTCY_ADS_GRPC_ADDRESS: "66.175.212.73:8888"
+  # Legacy HTTP adapter settings. Kept for backwards-compat; gRPC path takes priority.
+
   AGNTCY_ADS_URL: ""
   # Legacy adapter setting. Official DIR/ADS does not expose /v1/search.
   AGNTCY_ADS_SEARCH_PATH: "/v1/search"
-  NEU_REGISTRY_URL: ""
 
   # Optional external registration settings
   ENABLE_EXTERNAL_REGISTRATION: "false"
