@@ -629,7 +629,7 @@ async def get_ui():
             </div>
 
             <div class="protocol-controls">
-                <span class="protocol-label">Routing Mode:</span>
+                <span class="protocol-label">Orchestration Mode:</span>
                 <button class="protocol-button active" data-protocol="auto" onclick="selectProtocol('auto')">
                     <span class="protocol-icon">🤖</span>
                     <span>Auto</span>
@@ -661,7 +661,7 @@ async def get_ui():
         <div class="internals-panel">
             <div class="internals-header">
                 <div class="internals-title">System Internals</div>
-                <div class="internals-subtitle">Real-time routing & execution metrics</div>
+                <div class="internals-subtitle">Real-time orchestration & execution metrics</div>
                 <div class="weather-info" id="weatherInfo">
                     <div class="weather-info-title">Loading weather...</div>
                     <div class="weather-info-detail">Fetching Boston conditions...</div>
@@ -671,7 +671,7 @@ async def get_ui():
             <div class="internals-content" id="internalsContent">
                 <div class="info-block">
                     <div class="info-label">Waiting for query...</div>
-                    <div class="info-value" style="color: #888;">Send a message to see routing details</div>
+                    <div class="info-value" style="color: #888;">Send a message to see orchestration details</div>
                 </div>
             </div>
         </div>
@@ -872,8 +872,8 @@ async def get_ui():
             currentProtocol = protocol;
             document.querySelectorAll('.protocol-button').forEach(btn => btn.classList.remove('active'));
             document.querySelector(`[data-protocol="${protocol}"]`).classList.add('active');
-            const mode = protocol === 'auto' ? 'Intelligent Auto-Routing' : protocol === 'mcp' ? 'MCP Fast Path (forced)' : 'A2A Multi-Agent (forced)';
-            addSystemMessage(`Routing mode: ${mode}`);
+            const mode = protocol === 'auto' ? 'Intelligent Auto-Orchestration' : protocol === 'mcp' ? 'MCP Fast Path (forced)' : 'A2A Multi-Agent (forced)';
+            addSystemMessage(`Orchestration mode: ${mode}`);
         }
 
         function connectWebSocket() {
@@ -961,7 +961,7 @@ async def get_ui():
             const latencyPercent = Math.min((latency / 3000) * 100, 100);
             internalsContent.innerHTML = `
                 <div class="info-block">
-                    <div class="info-label">Routing Path</div>
+                    <div class="info-label">Execution Path</div>
                     <div class="info-value">
                         <span class="badge ${badgeClass}">${badgeText}</span>
                         ${manualOverride ? '<span class="badge override">🔧 MANUAL OVERRIDE</span>' : ''}
@@ -978,7 +978,7 @@ async def get_ui():
                     <div class="latency-bar"><div class="latency-fill" style="width: ${latencyPercent}%"></div></div>
                 </div>
                 <div class="info-block">
-                    <div class="info-label">Routing Logic</div>
+                    <div class="info-label">Orchestration Logic</div>
                     <div class="info-value" style="font-size: 12px; line-height: 1.6;">${reasoning}</div>
                 </div>
                 ${agents.length > 0 ? `<div class="info-block"><div class="info-label">Agents Called (${agents.length})</div><ul class="agent-list">${agents.map(agent => `<li class="agent-item">→ ${agent}</li>`).join('')}</ul></div>` : ''}
