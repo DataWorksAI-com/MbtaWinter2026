@@ -897,6 +897,7 @@ def register():
         "assigned_to": None,
         "api_url": api_url,
         "description": description,
+        "capabilities": data.get("capabilities", []),
         "last_update": datetime.now().isoformat(),
     }
 

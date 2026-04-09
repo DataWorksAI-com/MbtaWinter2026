@@ -873,24 +873,8 @@ async def call_mcp_tool_forced_exact(tool_name: str, parameters: Dict[str, Any])
     if not mcp_client:
         raise ValueError("MCP client not initialized")
 
-    tool_map = {
-        "mbta_get_alerts": mcp_client.get_alerts,
-        "mbta_search_stops": mcp_client.search_stops,
-        "mbta_plan_trip": mcp_client.plan_trip,
-        "mbta_get_routes": mcp_client.get_routes,
-        "mbta_get_predictions": mcp_client.get_predictions,
-        "mbta_list_all_stops": mcp_client.list_all_stops,
-        "mbta_list_all_alerts": mcp_client.list_all_alerts,
-        "mbta_list_all_routes": mcp_client.list_all_routes,
-    }
-
-    if tool_name not in tool_map:
-        logger.warning(f"Tool {tool_name} not in map")
-        raise ValueError(f"Unknown tool: {tool_name}")
-
-    method = tool_map[tool_name]
     logger.info(f"📞 Calling {tool_name} with {parameters}")
-    result = await method(**parameters)
+    result = await mcp_client.call_tool(tool_name, parameters)
     logger.info(f"✅ {tool_name} returned data")
     return result
 
@@ -1222,42 +1206,12 @@ async def call_mcp_tool_dynamic(tool_name: str, parameters: Dict) -> Dict[str, A
         span.set_attribute("tool_name", tool_name)
         span.set_attribute("parameters", json.dumps(parameters))
 
-        tool_method_map = {
-            "mbta_get_alerts": mcp_client.get_alerts,
-            "mbta_get_routes": mcp_client.get_routes,
-            "mbta_get_stops": mcp_client.get_stops,
-            "mbta_search_stops": mcp_client.search_stops,
-            "mbta_get_predictions": mcp_client.get_predictions,
-            "mbta_get_predictions_for_stop": mcp_client.get_predictions_for_stop,
-            "mbta_get_schedules": mcp_client.get_schedules,
-            "mbta_get_trips": mcp_client.get_trips,
-            "mbta_get_vehicles": mcp_client.get_vehicles,
-            "mbta_get_nearby_stops": mcp_client.get_nearby_stops,
-            "mbta_plan_trip": mcp_client.plan_trip,
-            "mbta_list_all_routes": mcp_client.list_all_routes,
-            "mbta_list_all_stops": mcp_client.list_all_stops,
-            "mbta_list_all_alerts": mcp_client.list_all_alerts,
-        }
-
         logger.info(f"🔧 Calling {tool_name} with params: {parameters}")
 
         try:
             result = await mcp_client.call_tool(tool_name, parameters)
-        except Exception as generic_error:
-            if tool_name in tool_method_map:
-                logger.warning(f"Generic MCP call failed for {tool_name}; retrying typed wrapper: {generic_error}")
-                method = tool_method_map[tool_name]
-                if tool_name == "mbta_plan_trip":
-                    normalized = dict(parameters)
-                    if "from" in normalized and "from_location" not in normalized:
-                        normalized["from_location"] = normalized.pop("from")
-                    if "to" in normalized and "to_location" not in normalized:
-                        normalized["to_location"] = normalized.pop("to")
-                    result = await method(**normalized)
-                else:
-                    result = await method(**parameters)
-            else:
-                raise
+        except Exception:
+            raise
 
         span.set_attribute("success", True)
         logger.info("✓ Tool execution successful")

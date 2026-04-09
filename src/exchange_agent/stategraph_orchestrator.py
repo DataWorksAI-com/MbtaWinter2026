@@ -321,7 +321,7 @@ def _infer_capabilities(query: str) -> List[str]:
     caps: List[str] = []
 
     if any(w in q for w in ["route", "plan", "trip", "get from", "get to", "directions", "how do i get"]):
-        caps.extend(["routing", "alerts", "stops"])
+        caps.extend(["routing", "route", "trip", "alerts", "stops"])
     else:
         if any(w in q for w in ["alert", "delay", "disruption", "wait", "crowding", "status"]):
             caps.append("alerts")
@@ -387,9 +387,9 @@ def _deduplicate_candidates(candidates: List[Dict]) -> List[Dict]:
     """Keep the best record per logical agent.
 
     Priority reflects the target demo topology:
-      mit (stopfinder) > agntcy (planner) > nanda (local) > neu
+      agntcy (planner) > mit (stopfinder) > nanda (local) > neu
     """
-    priority = {"mit": 0, "agntcy": 1, "nanda": 2, "neu": 3}
+    priority = {"agntcy": 0, "mit": 1, "nanda": 2, "neu": 3}
     best: Dict[str, Dict] = {}
     for c in candidates:
         canonical = _normalize_agent_id(c)
@@ -530,7 +530,7 @@ async def call_stopfinder_for_location(location: str, config: AgentConfig, conv_
     if not location:
         return ""
     
-    query = f"Find station: {location}"
+    query = location
     
     global _current_orchestrator
     
@@ -945,9 +945,45 @@ async def synthesize_node(state: AgentState) -> AgentState:
                     logger.info("✓ No issues - planner only")
                     return {**state, "final_response": planner_resp, "should_end": True}
                 else:
-                    # Has issues - simple combination (NO LLM!)
-                    combined = f"{alerts_resp}\n\n{planner_resp}"
-                    logger.info("✓ Combined alerts + planner (no LLM)")
+                    # Has issues - LLM synthesis for coherent response
+                    try:
+                        import urllib.request as _urllib
+                        import asyncio as _asyncio
+                        synthesis_prompt = f"""You are an MBTA transit assistant. Synthesize the alerts and route information into a clear, concise response.
+
+User query: {state['user_message']}
+
+Alerts:
+{alerts_resp}
+
+Route:
+{planner_resp}
+
+Instructions:
+- Lead with the route recommendation
+- Include alerts directly on the trip route
+- Include any service disruptions (shuttle buses, line suspensions) on nearby or connecting lines that could affect alternatives
+- Suggest alternative routes if a connecting line has major disruptions
+- Include arrival times if provided
+- Keep it to 4-6 sentences"""
+                        _payload = json.dumps({
+                            "model": "gpt-4o-mini",
+                            "messages": [{"role": "user", "content": synthesis_prompt}],
+                            "temperature": 0.3,
+                            "max_tokens": 300,
+                        }).encode()
+                        _req = _urllib.Request(
+                            "https://api.openai.com/v1/chat/completions",
+                            data=_payload,
+                            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                            method="POST"
+                        )
+                        _resp = await _asyncio.to_thread(lambda: json.loads(_urllib.urlopen(_req, timeout=10).read()))
+                        combined = _resp["choices"][0]["message"]["content"]
+                        logger.info("✓ LLM synthesis of alerts + planner")
+                    except Exception as e:
+                        logger.warning(f"LLM synthesis failed, falling back: {e}")
+                        combined = f"{alerts_resp}\n\n{planner_resp}"
                     return {**state, "final_response": combined, "should_end": True}
         
         # ================================================================
