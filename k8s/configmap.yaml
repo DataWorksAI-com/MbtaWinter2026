@@ -34,7 +34,32 @@ data:
   # Application
   LOG_LEVEL: "INFO"
 
+  # Registry federation (switchboard mode)
+  # Demo target topology:
+  #   - external MIT-NANDA -> mbta-stopfinder
+  #   - internal Northeastern NANDA -> mbta-alerts
+  #   - internal AGNTCY ADS -> mbta-planner
+  ENABLE_FEDERATION: "true"
+  # When true, Exchange queries /switchboard/discover instead of bulk-loading
+  # the local agent catalog. Requires ENABLE_FEDERATION on the registry side.
+  USE_SWITCHBOARD: "true"
+  SWITCHBOARD_TIMEOUT_SECONDS: "5"
+  # External MIT NANDA registry — stopfinder is registered here as skill-mbta-stopfinder
+  MIT_NANDA_URL: "https://nest.projectnanda.org/api"
+  # Internal NEU ADS gRPC address — used by the DIR SDK adapter for discovery and registration.
+  AGNTCY_ADS_GRPC_ADDRESS: "66.175.212.73:8888"
+  AGNTCY_ADS_URL: ""
+  # Legacy adapter setting. Official DIR/ADS does not expose /v1/search.
+  AGNTCY_ADS_SEARCH_PATH: "/v1/search"
+  NEU_REGISTRY_URL: "http://172.234.4.91:6900"
+
+  # Optional external registration settings
+  ENABLE_EXTERNAL_REGISTRATION: "false"
+  NEU_REGISTRY_REGISTER_URL: ""
+  AGNTCY_REGISTER_WEBHOOK_URL: ""
+
   # LLM Provider config
   LLM_PROVIDER: "anthropic"
   ANTHROPIC_MODEL: "claude-haiku-4-5-20251001"
   OPENAI_MODEL: "gpt-4o-mini"
+

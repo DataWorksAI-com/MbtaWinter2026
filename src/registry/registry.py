@@ -1,8 +1,17 @@
 from flask import Flask, request, jsonify
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask_cors import CORS
 from typing import Any, Dict, List
+import urllib.request
+import urllib.error
+import json as _json
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 TEST_MODE = os.getenv("TEST_MODE") == "1"
 
@@ -333,6 +342,390 @@ def dashboard():
             return Response(f.read(), mimetype='text/html')
     return jsonify({"service": "NANDA Registry", "version": "v3"})
 
+import urllib.request
+import urllib.error
+import json as _json
+
+_nanda_cache = None
+_nanda_cache_time = None
+_nanda_cache_ttl = timedelta(minutes=10)
+
+ENABLE_FEDERATION       = _env_bool("ENABLE_FEDERATION", default=False)
+USE_SWITCHBOARD         = _env_bool("USE_SWITCHBOARD",   default=False)
+SWITCHBOARD_TIMEOUT     = float(os.getenv("SWITCHBOARD_TIMEOUT_SECONDS", "5"))
+NEU_REGISTRY_URL        = os.getenv("NEU_REGISTRY_URL",        "").rstrip("/")
+AGNTCY_ADS_URL          = os.getenv("AGNTCY_ADS_URL",          "").rstrip("/")
+AGNTCY_ADS_SEARCH_PATH  = os.getenv("AGNTCY_ADS_SEARCH_PATH",  "/v1/search")
+AGNTCY_ADS_TOKEN        = os.getenv("AGNTCY_ADS_TOKEN",        "").strip()
+AGNTCY_ADS_GRPC_ADDRESS = os.getenv("AGNTCY_ADS_GRPC_ADDRESS", "").strip()
+MIT_NANDA_URL           = os.getenv("MIT_NANDA_URL",           "").rstrip("/")
+
+def _http_get(url: str, token: str = "") -> dict:
+    """Simple blocking HTTP GET, returns parsed JSON or raises."""
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=SWITCHBOARD_TIMEOUT) as resp:
+        return _json.loads(resp.read().decode())
+
+
+def _classify_upstream(name: str, base_url: str, sample_agent: str,
+                        search_path: str = "/list", token: str = "") -> dict:
+    """
+    Probe an upstream registry and classify its state.
+    Returns {"registry": name, "url": base_url, "state": <classification>, "detail": ...}
+    """
+    if not base_url:
+        return {"registry": name, "url": base_url, "state": "upstream_unavailable",
+                "detail": "URL not configured"}
+    try:
+        data = _http_get(base_url + search_path, token=token)
+    except Exception as exc:
+        return {"registry": name, "url": base_url, "state": "upstream_unavailable",
+                "detail": str(exc)}
+
+    if not isinstance(data, dict):
+        return {"registry": name, "url": base_url, "state": "reachable_schema_mismatch",
+                "detail": f"Expected dict, got {type(data).__name__}"}
+
+    if sample_agent in data:
+        return {"registry": name, "url": base_url, "state": "reachable_found",
+                "detail": f"Agent '{sample_agent}' found"}
+
+    return {"registry": name, "url": base_url, "state": "reachable_empty_result",
+            "detail": f"Agent '{sample_agent}' not found"}
+    
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Switchboard federation — adapters + discovery
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _http_get(url: str, token: str = "") -> dict:
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=SWITCHBOARD_TIMEOUT) as resp:
+        return _json.loads(resp.read().decode())
+
+
+def _to_passport(agent_id: str, agent_url: str, capabilities: list,
+                 description: str, source: str) -> dict:
+    """Unified AI Agent Digital Passport format."""
+    return {
+        "agent_id":    agent_id,
+        "agent_url":   agent_url,
+        "capabilities": capabilities,
+        "description": description,
+        "source":      source,
+        "alive":       True,
+    }
+
+
+# ── NEU adapter (REST) ────────────────────────────────────────────────────────
+
+def _neu_lookup(agent_id: str) -> dict:
+    data = _http_get(f"{NEU_REGISTRY_URL}/agents/{agent_id}")
+    return _to_passport(
+        agent_id    = data.get("agent_id", agent_id),
+        agent_url   = data.get("agent_url", ""),
+        capabilities= data.get("capabilities", []),
+        description = data.get("description", ""),
+        source      = "neu",
+    )
+
+
+def _neu_search(query: str) -> list:
+    """Direct lookup of known MBTA agents in NEU registry."""
+    results = []
+    try:
+        data = _http_get(f"{NEU_REGISTRY_URL}/agents/mbta-alerts")
+        if data and not data.get("error"):
+            results.append(_to_passport(
+                agent_id    = data.get("agent_id", "mbta-alerts"),
+                agent_url   = data.get("agent_url", ""),
+                capabilities= data.get("capabilities", []),
+                description = data.get("description", ""),
+                source      = "neu",
+            ))
+    except Exception as e:
+        print(f"⚠️ NEU lookup error: {e}")
+    return results
+
+# ── MIT-NANDA adapter (REST) ──────────────────────────────────────────────────
+
+NANDA_MBTA_AGENTS = ["skill-mbta-stopfinder", "skill-mbta-planner"]
+
+def _nanda_search(query: str) -> list:
+    """Direct lookup of known MBTA agents in MIT NANDA."""
+    results = []
+    for agent_id in NANDA_MBTA_AGENTS:
+        if any(x in query.lower() for x in ["mbta", "stop", "plan", "route", "trip"]):
+            try:
+                data = _http_get(f"{MIT_NANDA_URL}/agents/{agent_id}")
+                if data and not data.get("error"):
+                    results.append(_to_passport(
+                        agent_id    = data.get("id", agent_id),
+                        agent_url   = data.get("endpoint", ""),
+                        capabilities= data.get("specialties", []),
+                        description = data.get("description", ""),
+                        source      = "mit-nanda",
+                    ))
+            except Exception as e:
+                print(f"⚠️ NANDA lookup {agent_id}: {e}")
+    return results
+
+import threading
+
+def _warm_nanda_cache():
+    """Pre-fetch all MIT NANDA agents into cache on startup."""
+    try:
+        print("🔄 Warming MIT NANDA cache...")
+        _nanda_search("mbta")
+        print(f"✅ MIT NANDA cache warmed: {len(_nanda_cache or [])} agents")
+    except Exception as e:
+        print(f"⚠️ Cache warm failed: {e}")
+
+# Start cache warming in background thread
+threading.Thread(target=_warm_nanda_cache, daemon=True).start()
+
+def _nanda_lookup(agent_id: str) -> dict:
+    data = _http_get(f"{MIT_NANDA_URL}/agents/{agent_id}")
+    return _to_passport(
+        agent_id    = data.get("id", agent_id),
+        agent_url   = data.get("endpoint", ""),
+        capabilities= data.get("specialties", []),
+        description = data.get("description", ""),
+        source      = "mit-nanda",
+    )
+
+# ── AGNTCY-ADS adapter (gRPC → passport translation) ─────────────────────────
+
+def _oasf_to_passport(oasf_agent: dict, source: str = "agntcy") -> dict:
+    """
+    Translate OASF hierarchical skills taxonomy into the unified passport format.
+    OASF fields: name, locators[{type, url}], skills[{category, subcategory, name}]
+    """
+    agent_id = oasf_agent.get("name", "")
+
+    # Extract primary URL from locators
+    agent_url = ""
+    for loc in oasf_agent.get("locators", []):
+        if loc.get("type") in ("url", "http", "https", "endpoint"):
+            agent_url = loc.get("url", "")
+            break
+    if not agent_url and oasf_agent.get("locators"):
+        agent_url = oasf_agent["locators"][0].get("url", "")
+
+    # Flatten skills taxonomy → capabilities array
+    capabilities = []
+    for skill in oasf_agent.get("skills", []):
+        parts = [
+            skill.get("category", ""),
+            skill.get("subcategory", ""),
+            skill.get("name", ""),
+        ]
+        cap = ".".join(p for p in parts if p)
+        if cap:
+            capabilities.append(cap)
+
+    description = oasf_agent.get("description", "")
+
+    return _to_passport(agent_id, agent_url, capabilities, description, source)
+
+
+def _agntcy_grpc_search(query: str) -> list:
+    if not _AGNTCY_SDK_AVAILABLE or not AGNTCY_ADS_GRPC_ADDRESS:
+        return []
+    try:
+        cfg = _DirConfig(address=AGNTCY_ADS_GRPC_ADDRESS)
+        client = _DirClient(cfg)
+        req = _search_v1.SearchCIDsRequest(queries=[query], limit=10)
+        resp = client.search_cids(req)
+        cids = getattr(resp, "cids", [])
+        results = []
+        for cid in cids:
+            try:
+                get_req = _core_v1.GetRequest(cid=cid)
+                agent = client.get(get_req)
+                raw = _json.loads(agent.SerializeToString()) if hasattr(agent, "SerializeToString") else {}
+                results.append(_oasf_to_passport(raw))
+            except Exception as e:
+                print(f"⚠️ AGNTCY get error for CID {cid}: {e}")
+        return results
+    except Exception as e:
+        print(f"⚠️ AGNTCY gRPC search error: {e}")
+        return []
+
+def _agntcy_grpc_lookup(agent_id: str) -> dict:
+    """Lookup a single agent by ID via AGNTCY ADS gRPC."""
+    if not _AGNTCY_SDK_AVAILABLE or not AGNTCY_ADS_GRPC_ADDRESS:
+        raise RuntimeError("AGNTCY SDK unavailable or address not configured")
+    cfg = _DirConfig(address=AGNTCY_ADS_GRPC_ADDRESS)
+    client = _DirClient(cfg)
+    req = _core_v1.GetAgentRequest(name=agent_id)
+    resp = client.get_agent(req)
+    raw = _json.loads(resp.SerializeToString()) if hasattr(resp, "SerializeToString") else {}
+    return _oasf_to_passport(raw)
+
+
+# ── classify helper (for diagnostics) ────────────────────────────────────────
+
+import urllib.parse
+
+def _classify_upstream(name: str, base_url: str, sample_agent: str,
+                        search_path: str = "/list", token: str = "") -> dict:
+    if not base_url:
+        return {"registry": name, "url": base_url,
+                "state": "upstream_unavailable", "detail": "URL not configured"}
+    try:
+        data = _http_get(base_url + search_path, token=token)
+    except Exception as exc:
+        return {"registry": name, "url": base_url,
+                "state": "upstream_unavailable", "detail": str(exc)}
+    if not isinstance(data, dict):
+        return {"registry": name, "url": base_url,
+                "state": "reachable_schema_mismatch",
+                "detail": f"Expected dict, got {type(data).__name__}"}
+    if sample_agent in data:
+        return {"registry": name, "url": base_url,
+                "state": "reachable_found", "detail": f"Agent '{sample_agent}' found"}
+    return {"registry": name, "url": base_url,
+            "state": "reachable_empty_result",
+            "detail": f"Agent '{sample_agent}' not found"}
+
+
+# ── routes ────────────────────────────────────────────────────────────────────
+
+@app.route('/switchboard/registries', methods=['GET'])
+def switchboard_registries():
+    upstreams = []
+    if NEU_REGISTRY_URL:
+        try:
+            _http_get(NEU_REGISTRY_URL + "/health")
+            upstreams.append({"name": "neu", "url": NEU_REGISTRY_URL, "reachable": True})
+        except Exception as e:
+            upstreams.append({"name": "neu", "url": NEU_REGISTRY_URL,
+                              "reachable": False, "error": str(e)})
+    if AGNTCY_ADS_GRPC_ADDRESS:
+        upstreams.append({
+            "name": "agntcy", "url": AGNTCY_ADS_GRPC_ADDRESS,
+            "protocol": "grpc",
+            "sdk_available": _AGNTCY_SDK_AVAILABLE,
+            "reachable": _AGNTCY_SDK_AVAILABLE,
+        })
+    if MIT_NANDA_URL:
+        try:
+            _http_get(MIT_NANDA_URL + "/health")
+            upstreams.append({"name": "mit-nanda", "url": MIT_NANDA_URL, "reachable": True})
+        except Exception as e:
+            upstreams.append({"name": "mit-nanda", "url": MIT_NANDA_URL,
+                              "reachable": False, "error": str(e)})
+    return jsonify({
+        "federation_enabled": ENABLE_FEDERATION,
+        "use_switchboard":    USE_SWITCHBOARD,
+        "local_registry":     "http://registry:6900",
+        "upstreams":          upstreams,
+    })
+
+
+@app.route('/switchboard/lookup/<path:switchboard_id>', methods=['GET'])
+def switchboard_lookup(switchboard_id):
+    if not ENABLE_FEDERATION:
+        return jsonify({"error": "Federation is disabled"}), 503
+    try:
+        if switchboard_id.startswith("@neu:"):
+            agent_id = switchboard_id[5:]
+            if not NEU_REGISTRY_URL:
+                return jsonify({"error": "NEU_REGISTRY_URL not configured"}), 503
+            return jsonify({"source": "neu", "agent": _neu_lookup(agent_id)})
+
+        elif switchboard_id.startswith("@nanda:"):
+            agent_id = switchboard_id[7:]
+            if not MIT_NANDA_URL:
+                return jsonify({"error": "MIT_NANDA_URL not configured"}), 503
+            return jsonify({"source": "mit-nanda", "agent": _nanda_lookup(agent_id)})
+
+        elif switchboard_id.startswith("@agntcy:"):
+            agent_id = switchboard_id[8:]
+            return jsonify({"source": "agntcy", "agent": _agntcy_grpc_lookup(agent_id)})
+
+        else:
+            return jsonify({"error": f"Unknown prefix in '{switchboard_id}'"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route('/switchboard/discover', methods=['GET'])
+def switchboard_discover():
+    """
+    Capability-based federated discovery across all three registries.
+    Returns unified passport list sorted by source.
+    Query params:
+      q         — capability/keyword search string
+      registry  — filter to one registry: neu | agntcy | mit-nanda (optional)
+    """
+    if not ENABLE_FEDERATION:
+        return jsonify({"error": "Federation is disabled"}), 503
+
+    query    = request.args.get("q", "").strip()
+    reg_filter = request.args.get("registry", "").strip().lower()
+    results  = []
+    errors   = {}
+
+    if not reg_filter or reg_filter == "neu":
+        if NEU_REGISTRY_URL:
+            try:
+                results.extend(_neu_search(query))
+            except Exception as e:
+                errors["neu"] = str(e)
+
+    if not reg_filter or reg_filter == "agntcy":
+        if AGNTCY_ADS_GRPC_ADDRESS:
+            try:
+                results.extend(_agntcy_grpc_search(query))
+            except Exception as e:
+                errors["agntcy"] = str(e)
+
+    if not reg_filter or reg_filter == "mit-nanda":
+        if MIT_NANDA_URL:
+            try:
+                results.extend(_nanda_search(query))
+            except Exception as e:
+                errors["mit-nanda"] = str(e)
+
+    return jsonify({
+        "query":   query,
+        "count":   len(results),
+        "agents":  results,
+        "errors":  errors,
+    })
+
+
+@app.route('/switchboard/diagnostics', methods=['GET'])
+def switchboard_diagnostics():
+    sample_agent = request.args.get("agent", "mbta-alerts")
+    results = []
+    if NEU_REGISTRY_URL:
+        results.append(_classify_upstream(
+            "neu", NEU_REGISTRY_URL, sample_agent, search_path="/list"))
+    if AGNTCY_ADS_GRPC_ADDRESS:
+        results.append({
+            "registry": "agntcy",
+            "url": AGNTCY_ADS_GRPC_ADDRESS,
+            "protocol": "grpc",
+            "state": "reachable_found" if _AGNTCY_SDK_AVAILABLE else "upstream_unavailable",
+            "detail": "gRPC SDK available" if _AGNTCY_SDK_AVAILABLE else "AGNTCY SDK not installed",
+        })
+    if MIT_NANDA_URL:
+        results.append(_classify_upstream(
+            "mit-nanda", MIT_NANDA_URL, sample_agent, search_path="/list"))
+    return jsonify({
+        "federation_enabled": ENABLE_FEDERATION,
+        "sample_agent":       sample_agent,
+        "diagnostics":        results,
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', DEFAULT_PORT))

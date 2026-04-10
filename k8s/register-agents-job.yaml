@@ -78,3 +78,15 @@ spec:
               echo ""
               echo "✅ All agents registered!"
               curl -s http://registry:6900/list | head -100
+
+              echo ""
+              echo "Registering Alerts Agent in NEU external registry..."
+              curl -s -X POST http://172.234.4.91:6900/register \
+                -H "Content-Type: application/json" \
+                -d '{"agent_id":"mbta-alerts","name":"MBTA Alerts Agent","description":"Monitors and reports MBTA service alerts.","agent_url":"http://alerts-agent:8001","capabilities":["alerts","service_status","delays","disruptions"]}'
+
+              curl -s -X PUT http://172.234.4.91:6900/agents/mbta-alerts/status \
+                -H "Content-Type: application/json" \
+                -d '{"alive":true,"capabilities":["alerts","service_status","delays","disruptions"],"description":"Monitors and reports MBTA service alerts."}'
+
+              echo "✅ NEU external registration complete"
