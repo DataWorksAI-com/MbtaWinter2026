@@ -1,4 +1,4 @@
-# MBTA Winter 2026
+# MBTA Transit Conversational Intelligence application
 ## Hybrid Protocol Transit Intelligence System
 A Distributed multi-agent system serving Boston's MBTA network with intelligent MCP+A2A protocol orchestration via SLIM transport and NANDA Registry Federation
 
@@ -10,7 +10,7 @@ A Distributed multi-agent system serving Boston's MBTA network with intelligent 
 
 ## 🎯 **What This Is**
 
-MBTA Winter 2026 demonstrates **hybrid protocol orchestration** by combining:
+MBTA Transit Conversational Intelligence application demonstrates **hybrid protocol orchestration** by combining:
 - **Anthropic's MCP** (Model Context Protocol) for fast, single-tool queries (~400ms)
 - **NANDA/Google's A2A** (Agent-to-Agent) for complex multi-agent coordination (~1500ms)
 - **Cisco's SLIM** (Semantic Language Interface for Multi-agent) transport for standardized A2A communication
